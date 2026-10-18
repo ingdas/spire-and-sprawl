@@ -105,7 +105,7 @@ export const HEATS = [
   'Start with 3 less gold and 3 less core HP.',
   'Elites appear from night 2, twice as often.',
   'Act guardians have +50% HP.',
-  'No free relic every third morning.',
+  'Treasure spots on the map become events.',
 ];
 
 export const SEALS = { night: 1, hardNight: 3, win: 8, plate: 6 };
@@ -184,6 +184,23 @@ export class Meta {
     this.save();
     return true;
   }
+
+  /** Respec: take back the last rank of an upgrade for a full refund. */
+  refund(id: UpgradeId): boolean {
+    const r = this.rank(id);
+    if (!r) return false;
+    this.seals += UPGRADES.find(x => x.id === id)!.costs[r - 1];
+    this.ranks[id] = r - 1;
+    this.save();
+    return true;
+  }
+
+  refundAll() {
+    for (const u of UPGRADES) while (this.rank(u.id)) this.refund(u.id);
+  }
+
+  /** seals currently invested in upgrades */
+  invested() { return UPGRADES.reduce((s, u) => s + u.costs.slice(0, this.rank(u.id)).reduce((a, b) => a + b, 0), 0); }
 
   has(id: CodexId) { return this.unlocked.has(id); }
 

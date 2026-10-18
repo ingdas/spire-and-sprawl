@@ -488,3 +488,55 @@ kbd { font-family: var(--mono); font-size: 10.5px; font-weight: 600; border: 1px
   .detail { width: 100%; }
   .banner .t { font-size: 66px; }
 }
+
+/* act map: a hand-drawn route chart, start at the bottom, boss at the top */
+.mapwrap { display: grid; grid-template-columns: minmax(260px, 420px) 1fr; gap: 26px; margin-top: 14px; align-items: start; }
+.map { position: relative; width: 100%; height: calc(var(--rows) * 62px); border: 1.5px solid var(--ink); background: var(--paper-2); border-radius: 3px; }
+.map svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.map line { stroke: var(--ink-faint); stroke-width: 2.5; stroke-dasharray: 5 6; vector-effect: non-scaling-stroke; }
+.map line.open { stroke: var(--ink); stroke-dasharray: none; }
+.map line.walked { stroke: var(--red); stroke-dasharray: none; stroke-width: 3.5; }
+.map .node { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; border: 2.5px solid var(--ink-faint); background: var(--paper); color: var(--ink-soft); display: grid; place-items: center; padding: 0; cursor: help; }
+.map .node .ic { font-family: var(--display); font-weight: 800; }
+.map .node .ic { font-size: 19px; line-height: 1; }
+.map .node.fight { border-radius: 30%; }
+.map .node.fight .ic { color: var(--red); }
+.map .node.k-guardian { width: 56px; height: 56px; margin: -28px 0 0 -28px; border-color: var(--red); }
+.map .node.k-guardian .ic { font-size: 26px; }
+.map .node .nt { position: absolute; left: -7px; bottom: -7px; min-width: 18px; height: 18px; padding: 0 3px; border-radius: 9px; background: var(--ink); color: var(--paper); font: 700 11px/18px var(--mono); }
+.map .node .wx { position: absolute; right: -8px; top: -8px; width: 20px; height: 20px; border-radius: 50%; background: var(--paper); border: 1.5px solid var(--ink); font-size: 11px; line-height: 17px; }
+.map .node.done { background: var(--ink-faint); opacity: 0.75; }
+.map .node.here { border-color: var(--red); background: var(--red-wash); opacity: 1; }
+.map .node.can { cursor: pointer; border-color: var(--ink); color: var(--ink); box-shadow: 0 3px 0 var(--ink); animation: nodeGlow 1.4s ease-in-out infinite; }
+.map .node.can:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
+.map .node.sel { border-color: var(--red); box-shadow: 0 3px 0 var(--red), 0 0 0 5px var(--red-wash); animation: none; }
+@keyframes nodeGlow { 50% { box-shadow: 0 3px 0 var(--ink), 0 0 0 6px var(--red-wash); } }
+.mapinfo .mapnote { margin: 12px 0 0; font-size: 13.5px; color: var(--ink-soft); }
+.mapinfo .pick { display: grid; grid-template-columns: 52px 1fr; gap: 12px; align-items: start; padding: 12px 14px; border: 2px solid var(--ink); background: var(--paper); }
+.mapinfo .pick.fight { border-color: var(--red); }
+.mapinfo .pick .ic { width: 52px; height: 52px; border: 2px solid currentColor; border-radius: 50%; display: grid; place-items: center; font-size: 24px; }
+.mapinfo .pick.fight .ic { color: var(--red); border-radius: 30%; }
+.mapinfo .pick b { display: block; font-family: var(--display); font-weight: 800; font-size: 26px; text-transform: uppercase; line-height: 1; margin: 2px 0 4px; }
+.mapinfo .pick p { margin: 0; font-size: 14px; line-height: 1.45; }
+.mapinfo .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 14px; font-size: 12.5px; color: var(--ink-soft); }
+.mapinfo .legend span { display: inline-flex; align-items: center; gap: 5px; }
+.mapinfo .legend i { font-style: normal; width: 22px; height: 22px; border: 1.5px solid var(--ink-faint); border-radius: 50%; display: grid; place-items: center; font-size: 12px; color: var(--ink); }
+.mapinfo .legend i.f { border-radius: 30%; color: var(--red); }
+.mapinfo .bagbtn { margin-top: 12px; }
+.contract:disabled { opacity: 0.45; cursor: default; }
+.contract:disabled:hover { border-color: var(--ink-faint); }
+@media (max-width: 760px) {
+  .mapwrap { grid-template-columns: 1fr; gap: 12px; }
+  .map { height: calc(var(--rows) * 50px); }
+  .mapwrap .mapinfo { order: -1; }
+  .mapinfo .legend, .mapinfo .bagbtn { display: none; }
+  .mapinfo .mapnote { margin-top: 6px; font-size: 12px; }
+  .mapsheet .head .note { display: none; }
+  .mapsheet .foot, .stopsheet .foot { flex-wrap: nowrap; align-items: center; }
+  .mapsheet .foot .label { font-size: 10px; }
+  .mapsheet .foot .stamp, .stopsheet .foot .stamp { white-space: nowrap; font-size: 21px; }
+  .mapinfo .pick { grid-template-columns: 40px 1fr; padding: 10px; }
+  .mapinfo .pick .ic { width: 40px; height: 40px; font-size: 19px; }
+  .mapinfo .pick b { font-size: 21px; }
+  .mapinfo .pick p { font-size: 13px; }
+}

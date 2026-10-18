@@ -143,6 +143,8 @@ export class Board {
       const col = this.cols[i];
       if (x === 0 || y === 0 || x === N - 1 || y === N - 1) { rim += col.filter(Boolean).length; this.cols[i] = []; continue; }
       if (col.length > maxH) { tops += col.slice(maxH).filter(Boolean).length; col.length = maxH; }
+      // the cut can expose a hollow; a column never ends in an empty slot
+      while (col.length && !col[col.length - 1]) col.pop();
     }
     this.recompute();
     return { rim, tops };

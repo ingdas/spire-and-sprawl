@@ -17,7 +17,19 @@ npm run preview  # serve the built export
 
 - **Day:** draw 4 pieces and place them. A piece lands on whatever is under it, so stacking builds up and spreading claims ground. You can **keep** one piece for tomorrow, **demolish** 2 blocks, and starting the night early pays +1 gold per unused piece.
 - **Night:** enemies come from the red sides and chew the *bottom* of your columns. Click a tower to **topple** it: it falls in a line and crushes everything it lands on, and if it hits another tower that one falls too. In an emergency you can drop a stone block for 3 gold. The Aim setting picks what turrets shoot first.
-- **Dawn:** collect gold (with interest on savings), take a free piece (sometimes gilded or unique), shop for relics and pieces, forge a piece, patch walls, upgrade the core pulse, and **pick tonight's contract** for more risk and more reward. Some mornings bring a small event.
+- **Morning:** collect gold (with interest on savings) and pick one free piece (sometimes gilded or unique). Sky raids also give a relic.
+- **Map:** each act is a branching map, read from bottom to top. Red squares are nights and show the night's type (normal, quiet, bounty, sky raid, siege) and weather, so harder nights are a choice. Between nights are stops, and each stop does one thing:
+
+  | Stop | What it does |
+  |---|---|
+  | Shop | Relics, pieces, core repair, remove a piece |
+  | Camp | Heal the core, mend every block, or raise the core pulse |
+  | Forge | Gild or transmute a piece, or throw one away |
+  | Treasure | 1 of 3 relics |
+  | Rare block | 1 of 2 unique blocks |
+  | Mystery | An event |
+
+  Every act has at least one shop, one rare block and one treasure, and a camp sits right before the boss. Tap any spot to read it.
 
 ## Acts and biomes
 
@@ -89,7 +101,7 @@ Type is Big Shoulders Display for headings and Rubik for text.
 
 ## Meta progression
 
-- **Seals and the Workshop.** Every run pays seals, win or lose. Spend them in the Workshop on 13 permanent upgrade tracks; some stay locked until a challenge is done.
+- **Seals and the Workshop.** Every run pays seals, win or lose. Put them into 13 upgrade tracks in the Workshop; some stay locked until a challenge is done. Upgrades can be refunded in full at any time between runs (one rank, or everything), so you can try different builds.
 - **Challenges.** 14 challenges, each asking you to play a different way. They unlock relics, founders and workshop tracks.
 - **Heat.** After a win, Heat levels add stacking difficulty for +20% seals per level.
 
@@ -99,6 +111,7 @@ Type is Big Shoulders Display for headings and Rubik for text.
 |---|---|
 | `src/config.ts` | Tuning: materials, unique blocks, turrets, enemies, guardians |
 | `src/biomes.ts` | Biomes, route, act helpers |
+| `src/map.ts` | Act map generation: rows, lanes, stops, night types |
 | `src/pieces.ts` | Polycube shapes, generation, founders, card drawings |
 | `src/board.ts` | Column stacking, collapse, topple, journey damage, exposure, flow field |
 | `src/sim.ts` | Night simulation: turrets, reactions, enemies, guardians, weather, hazards; plus waves and contracts |

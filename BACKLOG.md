@@ -36,3 +36,8 @@ Status: ✅ done · 🔨 in progress · blank = not started
 | 28 | **Second core in act 3.** Defend two points. | Changes the shape of the late game. | |
 | 29 | **New challenges for the new systems.** Domino (a 3-tower chain), Globetrotter (survive a Caldera night) and Collector (3 unique blocks at once). Each unlocks one of the synergy relics. | Points players at the new mechanics. | ✅ |
 | 30 | **Daily seed.** | An engagement feature, so lowest priority. | |
+
+## After playtest feedback
+
+- **Act map replaces the morning shop.** The single morning screen did everything at once and was overwhelming. Now each morning is just gold plus one free piece. After that you walk a branching act map (`src/map.ts`) where every stop does one thing (shop, camp, forge, treasure, rare block, mystery). Night types (#7) are now baked into the night squares on the map, along with the weather. Events (#23), forge (#11) and wall repair (#27) moved into stops.
+- **Respec-able Workshop.** Upgrades are no longer bought once and kept forever. Each rank can be refunded in full between runs, and there's a Refund all button.

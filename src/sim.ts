@@ -48,7 +48,7 @@ export interface ContractDef {
   topple?: number;
 }
 
-/** Night contracts: pick tomorrow's risk and reward at dawn. */
+/** Night types: shown on the map's night squares, so you choose your risk by choosing your path. */
 export const CONTRACTS: Record<ContractId, ContractDef> = {
   standard: { id: 'standard', name: 'Normal night', icon: '☾', desc: 'No surprises.', budget: 1 },
   calm: { id: 'calm', name: 'Quiet night', icon: '☁', desc: '30% fewer enemies. No reward.', budget: 0.7 },
@@ -179,7 +179,7 @@ export interface SimHooks {
   biome: BiomeDef;
   /** heat level of the run (0 = none) */
   heat: number;
-  /** core pulse upgrades bought at dawn */
+  /** core pulse upgrades taken at camps */
   coreLevel: number;
   /** a chain of n towers just toppled */
   chain: (n: number) => void;
