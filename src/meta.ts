@@ -107,7 +107,15 @@ export const HEATS = [
   'Elites appear from night 2, twice as often.',
   'Act guardians have +50% HP.',
   'Treasure spots on the map become events.',
+  'Shops, relics and the premium shelf cost 25% more.',
+  'Enemies chew through blocks 25% faster.',
+  'You start each night with one topple fewer.',
+  'On journeys, towers lose everything above 8 high (not 10).',
+  'The final boss gets back up once, with half its HP.',
 ];
+
+/** Flag colours on the core, one per heat level beaten. */
+export const HEAT_COLORS = [0xffd34a, 0xffb43a, 0xff9332, 0xff702c, 0xf24e2a, 0xe0302e, 0xc72046, 0xa51a63, 0x7d1f7d, 0x4a2a8f];
 
 export const SEALS = { night: 1, hardNight: 3, win: 8, plate: 6 };
 
@@ -133,7 +141,7 @@ export const UPGRADES: UpgradeDef[] = [
   { id: 'keystone', name: 'Keystone', icon: '⌂', costs: [25], desc: () => 'once per run, a lethal blow leaves the core at 3 HP', locked: 'victory' },
 ];
 
-interface SaveData { unlocked: CodexId[]; runs: number; wins: number; bestNight: number; seals?: number; ranks?: Partial<Record<UpgradeId, number>>; heatWon?: number }
+interface SaveData { unlocked: CodexId[]; runs: number; wins: number; bestNight: number; seals?: number; ranks?: Partial<Record<UpgradeId, number>>; heatWon?: number; heat?: number }
 
 const KEY = 'spire-sprawl-save-v1';
 
@@ -157,13 +165,15 @@ export class Meta {
         this.runs = d.runs; this.wins = d.wins; this.bestNight = d.bestNight;
         this.seals = d.seals ?? 0; this.ranks = d.ranks ?? {};
         this.heatWon = d.heatWon ?? (d.wins > 0 ? 0 : -1);
+        // older saves did not store the chosen level
+        this.heat = Math.max(0, Math.min(d.heat ?? 0, this.maxHeat()));
       }
     } catch { /* storage unavailable: play without saves */ }
   }
 
   save() {
     try {
-      const d: SaveData = { unlocked: [...this.unlocked], runs: this.runs, wins: this.wins, bestNight: this.bestNight, seals: this.seals, ranks: this.ranks, heatWon: this.heatWon };
+      const d: SaveData = { unlocked: [...this.unlocked], runs: this.runs, wins: this.wins, bestNight: this.bestNight, seals: this.seals, ranks: this.ranks, heatWon: this.heatWon, heat: this.heat };
       localStorage.setItem(KEY, JSON.stringify(d));
     } catch { /* ignore */ }
   }

@@ -3,7 +3,7 @@ import { isMuted, music, setMuted, setVolumes, sfx } from './audio';
 import { PERF, Settings, loadSettings, saveSettings } from './settings';
 import { Board, Placement } from './board';
 import { CORE, ENEMIES, applyColorBlind, EnemyId, HAND_SIZE, MATS, MatId, N, NIGHTS, START_CORE_HP, START_GOLD, UNIQUES } from './config';
-import { CODEX, CodexDef, HEATS, Meta, RelicId, RunStats, SEALS, UPGRADES, relicDef } from './meta';
+import { CODEX, CodexDef, HEATS, HEAT_COLORS, Meta, RelicId, RunStats, SEALS, UPGRADES, relicDef } from './meta';
 import { FOUNDERS, FounderId, Piece, make, pivotOf, randomPiece, rotatePiece, uniquePiece } from './pieces';
 import { Renderer, world } from './render';
 import { AIMS, Aim, CONTRACTS, REACTIONS as COMBOS, ContractId, FOUNDATION_RANGE, Night, TOPPLE_SWING, isFoundation, REACTIONS, WEATHER, STACK_BONUS, Wave, makeWave, rangeBonus, reactionOf, stackBelow, turretRange } from './sim';
@@ -81,6 +81,12 @@ const EVENT_TEXT: Record<EventId, { icon: string; title: string; text: string; y
 };
 /** Towers taller than this lose their tops on the journey between biomes. */
 const JOURNEY_MAX_H = 10;
+
+/** A small flame badge showing a heat level. */
+function heatBadge(level: number, label = 'Heat') {
+  const c = HEAT_COLORS[Math.max(0, Math.min(HEAT_COLORS.length - 1, level - 1))].toString(16).padStart(6, '0');
+  return `<span class="heatbadge" style="--hc:#${c}" title="${label} ${level}"><span class="label">${label}</span>${level}</span>`;
+}
 const DEMOLISH_PER_DAY = 2;
 const DEMOLISH_COST = 3;
 const CAMP_HEAL = 6;
@@ -196,19 +202,20 @@ export class Game {
     this.r.clearAll();
     this.buildDemo();
     const m = this.meta;
+    this.r.setCoreFlags(HEAT_COLORS.slice(0, m.heatWon + 1));
     this.overlay(`
       <section class="paper sheet cover">
         <h1>Spire<br><span class="amp">&amp;</span>Sprawl</h1>
         <p class="note lede">Build a fortress on a floating island and survive ${NIGHTS} nights. Build tall to shoot far, or wide to earn gold.</p>
         <nav class="toc">
           ${this.savedRun() ? `<button class="first" data-act="continue"><span class="t">Continue</span><span class="lead"></span><span class="p">night ${this.savedRun()!.day} · ${BIOMES[this.savedRun()!.route[this.savedRun()!.act]].name}</span></button>` : ''}
-          <button class="${this.savedRun() ? '' : 'first'}" data-act="start"><span class="t">${this.savedRun() ? 'New run' : 'Play'}</span><span class="lead"></span><span class="p">▶</span></button>
+          <button class="${this.savedRun() ? '' : 'first'}" data-act="start"><span class="t">${this.savedRun() ? 'New run' : 'Play'}</span><span class="lead"></span><span class="p">${m.heat ? `heat ${m.heat} ` : ''}▶</span></button>
           <button data-act="atelier"><span class="t">Workshop</span><span class="lead"></span><span class="p">${m.runs ? `${m.seals} seals ✠ to spend` : 'permanent upgrades'}</span></button>
           <button data-act="codex"><span class="t">Challenges</span><span class="lead"></span><span class="p">${m.unlocked.size} / ${CODEX.length} done</span></button>
           <button data-act="howto"><span class="t">How to play</span><span class="lead"></span><span class="p">?</span></button>
           <button data-act="settings"><span class="t">Settings</span><span class="lead"></span><span class="p">⚙</span></button>
         </nav>
-        ${m.runs ? `<div class="foot"><span class="label">Runs ${m.runs} · Wins ${m.wins} · Best night ${m.bestNight || '—'}</span></div>` : ''}
+        ${m.runs ? `<div class="foot"><span class="label">Runs ${m.runs} · Wins ${m.wins} · Best night ${m.bestNight || '—'}</span>${m.heatWon >= 0 ? heatBadge(m.heatWon, 'Best heat won') : ''}</div>` : ''}
       </section>`, false, {
       start: () => { this.fullscreen(); if (this.savedRun()) this.ask('Start a new run?', 'Your saved run will be lost.', 'New run', () => { this.clearSave(); this.showFounders(); }); else this.showFounders(); },
       continue: () => { this.fullscreen(); this.loadRun(); },
@@ -249,12 +256,13 @@ export class Game {
       f_quarryman: () => this.startRun('quarryman'),
       back: () => this.showTitle(),
     };
-    for (let h = 0; h <= maxHeat; h++) acts[`h${h}`] = () => { m.heat = h; this.showFounders(); };
+    for (let h = 0; h <= maxHeat; h++) acts[`h${h}`] = () => { m.heat = h; m.save(); this.showFounders(); };
     const heatRow = maxHeat ? `${sec('ϟ', 'Heat', `+20% seals per level`)}
       <div class="heat">${Array.from({ length: maxHeat + 1 }, (_, h) => `<button class="chip ${m.heat === h ? 'on' : ''}" data-act="h${h}">${h || 'Off'}</button>`).join('')}</div>
-      <ul class="heat-rules">${HEATS.slice(0, m.heat).map(r => `<li>${r}</li>`).join('') || '<li>No extra rules.</li>'}</ul>` : '';
+      <ul class="heat-rules">${HEATS.slice(0, m.heat).map((r, i) => `<li class="${i === m.heat - 1 ? 'new' : 'old'}"><span class="lv">${i + 1}</span>${r}</li>`).reverse().join('') || '<li class="new">No extra rules. Pick a level to make the game harder.</li>'}</ul>
+      ${maxHeat < HEATS.length ? `<p class="note">Win at heat ${maxHeat} to unlock heat ${maxHeat + 1}.</p>` : ''}` : '';
     this.overlay(sheet({
-      kicker: 'New run',
+      kicker: m.heat ? `New run · Heat ${m.heat}` : 'New run',
       title: 'Pick your starting bag',
       note: 'This decides which pieces you begin with.',
       body: `<div class="heatbox">${heatRow}</div><div class="grid-row" style="margin-top:18px">${all.map(f => avail.includes(f)
@@ -348,6 +356,7 @@ export class Game {
         ${item('11', 'Watch out', '<b class="red">Sappers</b> tunnel to your tallest tower and blow up its base. <b class="red">Brutes</b> show up more when you build wide.')}
         ${item('12', 'The map', 'After each night you pick a free piece, then choose your path on the map. Red squares are nights (some are harder but pay more). The stops between them each do one thing: a shop, a camp to heal, a forge, treasure, a rare block or a mystery.')}
         ${item('13', 'Seals & workshop', 'Every run earns seals ✠, even if you lose. Spend them in the workshop on permanent upgrades. Challenges give the most seals.')}
+        ${item('14', 'Heat', `After your first win you can turn up the <b>heat</b> when you start a run. Each level adds one new rule on top of the ones before it (${HEATS.length} levels) and pays +20% seals. Win at a level to unlock the next one, and a flag for it flies on your core.`)}
         ${item('14', 'Controls', '<kbd>Click</kbd> place / topple · <kbd>R</kbd> rotate · drag to look around · <kbd>Q</kbd><kbd>E</kbd> turn the camera · <kbd>1</kbd>–<kbd>5</kbd> pick a piece · <kbd>K</kbd> keep for tomorrow · <kbd>X</kbd> demolish · <kbd>Z</kbd> undo · <kbd>Space</kbd> start the night · at night: <kbd>P</kbd> pause · <kbd>G</kbd> rally · <kbd>H</kbd> shore up · <kbd>D</kbd> drop stone · <kbd>V</kbd> ranges · <kbd>A</kbd> aim · <kbd>F</kbd> speed · <kbd>M</kbd> mute')}
       </div>`,
       foot: `${tab('Back', 'back')}`,
@@ -492,7 +501,7 @@ export class Game {
     this.flying = false;
     run.act = actOf(run.day);
     const b = this.biome;
-    const lost = run.board.journeyDamage(JOURNEY_MAX_H);
+    const lost = run.board.journeyDamage(run.heat >= 9 ? JOURNEY_MAX_H - 2 : JOURNEY_MAX_H);
     // the new landscape
     run.vents = [];
     for (const c of randomCells(b.outcrops, 3, (x, y) => run.board.height(x, y) > 0)) run.board.addTerrain(c.x, c.y, 1 + Math.floor(Math.random() * 2), 'rock', MATS.rock.hp);
@@ -579,7 +588,7 @@ export class Game {
     this.nightTip = '';
     this.r.setPaths([]);
     this.r.setValid([]);
-    run.topples = 1 + this.meta.rank('leverage') + (CONTRACTS[run.contract].topple ?? 0) + (this.has('tipping_point') ? 1 : 0);
+    run.topples = (run.heat >= 8 ? 0 : 1) + this.meta.rank('leverage') + (CONTRACTS[run.contract].topple ?? 0) + (this.has('tipping_point') ? 1 : 0);
     if (this.has('storm_caller') && !run.wave.guardian) run.wave.weather = 'storm';
     this.toppleDir = null;
     this.night = new Night(run.board, this.r, run.wave, {
@@ -995,7 +1004,9 @@ export class Game {
     if (won) payout.push(['Victory', SEALS.win]);
     if (run.platesEarned) payout.push([`Challenges done (${run.platesEarned})`, run.platesEarned * SEALS.plate]);
     if (run.heat) payout.push([`Heat ${run.heat} bonus`, Math.round(payout.reduce((s, p) => s + p[1], 0) * 0.2 * run.heat)]);
+    const unlockedHeat = won && run.heat > this.meta.heatWon && run.heat < HEATS.length ? run.heat + 1 : 0;
     if (won) this.meta.heatWon = Math.max(this.meta.heatWon, run.heat);
+    this.r.setCoreFlags(HEAT_COLORS.slice(0, this.meta.heatWon + 1));
     const runSeals = payout.reduce((s, p) => s + p[1], 0);
     // plate seals were already credited when the plates were certified
     this.meta.seals += runSeals - run.platesEarned * SEALS.plate;
@@ -1014,7 +1025,7 @@ export class Game {
       kicker: '',
       title: won ? 'You won!' : 'The core broke',
       note: won ? `You survived all ${NIGHTS} nights.` : `You made it to night ${run.day} of ${NIGHTS}.`,
-      headRight: `<div class="verdict">${won ? 'Victory' : 'Defeat'}</div>`,
+      headRight: `${run.heat ? heatBadge(run.heat) : ''}<div class="verdict">${won ? 'Victory' : 'Defeat'}</div>`,
       body: `<div class="cols"><div>
           ${sec(1, 'Your run')}
           <table class="schedule">
@@ -1037,6 +1048,7 @@ export class Game {
             ${ledgerLine('You have', `${this.meta.seals} ✠`, 'total')}
           </div>
           ${affordable ? `<p class="note" style="margin-top:8px">You can buy a workshop upgrade!</p>` : ''}
+          ${unlockedHeat ? `<p class="note heat-unlock">Heat ${unlockedHeat} unlocked! A new flag flies on your core. Next rule: ${HEATS[unlockedHeat - 1]}</p>` : ''}
         </aside></div>`,
       foot: `<div style="display:flex; gap:6px">${tab('Main menu', 'title')}${tab('Workshop', 'atelier', { red: affordable })}</div>${stamp('Play again', 'again')}`,
     }), true, {
@@ -1130,7 +1142,7 @@ export class Game {
   }
 
   private price(base: number) {
-    const f = (this.has('thrift') ? 0.7 : 1) * (1 - 0.1 * this.meta.rank('haggling'));
+    const f = (this.has('thrift') ? 0.7 : 1) * (1 - 0.1 * this.meta.rank('haggling')) * ((this.run?.heat ?? 0) >= 6 ? 1.25 : 1);
     return Math.ceil(base * f);
   }
   /** Relics get pricier the more you own. */
@@ -1654,7 +1666,8 @@ export class Game {
       <div class="cell ${low ? 'low' : ''}" data-tip="<b>Core HP</b><br>If it reaches 0, you lose."><span class="label">Core HP</span><span class="v"><span data-num="thp">${Math.ceil(run.coreHp)}</span><small>/${run.coreMax}</small></span><div class="hpbar">${ticks}</div></div>
       <div class="cell" data-tip="<b>Gold</b><br>Earned every morning, more with gardens on the ground."><span class="label">Gold</span><span class="v gold"><span data-num="tgold">${run.gold}</span></span></div>
       <div class="cell stat" data-tip="<b>Tallest tower</b><br>Height makes turrets shoot further, but attracts sappers."><span class="label">Tallest</span><span class="v"><span data-num="ttall">${st.tallest}</span></span></div>
-      <div class="cell stat" data-tip="<b>Area</b><br>Ground you have built on. Width earns gold, but attracts brutes."><span class="label">Area</span><span class="v"><span data-num="tarea">${st.footprint}</span></span></div>`;
+      <div class="cell stat" data-tip="<b>Area</b><br>Ground you have built on. Width earns gold, but attracts brutes."><span class="label">Area</span><span class="v"><span data-num="tarea">${st.footprint}</span></span></div>${run.heat ? `
+      <div class="cell heatcell" data-tip="<b>Heat ${run.heat}</b><br>${HEATS.slice(0, run.heat).map((r, i) => `${i + 1}. ${r.replace(/"/g, '&quot;')}`).join('<br>')}"><span class="label">Heat</span><span class="v">${run.heat}</span></div>` : ''}`;
     this.animateNumbers($('topbar'));
     this.phaseShown = this.phase;
   }

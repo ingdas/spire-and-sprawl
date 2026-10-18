@@ -234,6 +234,7 @@ export class Renderer {
   private cine: { point: THREE.Vector3; t: number; dur: number; pull: number } | null = null;
   private cineApplied = new THREE.Vector3();
   private perfFrame = 0;
+  private coreFlags = new THREE.Group();
   private coreSq = 0;
   private coreSqv = 0;
   private blockRoot = new THREE.Group();
@@ -293,7 +294,7 @@ export class Renderer {
     halo.rotation.x = Math.PI / 2;
     halo.position.y = 1.15;
     halo.name = 'halo';
-    this.core.add(base, this.coreGem, halo);
+    this.core.add(base, this.coreGem, halo, this.coreFlags);
     this.core.position.copy(world(CORE.x, CORE.y));
     this.coreXray = new THREE.Mesh(this.coreGem.geometry, new THREE.MeshBasicMaterial({ color: PALETTE.core, transparent: true, opacity: 0.35, depthTest: false, depthWrite: false }));
     this.coreXray.renderOrder = 30;
@@ -1243,6 +1244,31 @@ export class Renderer {
     this.fxList.push({ obj: s, life: 1.1, max: 1.1, kind: 'float' });
   }
 
+  /** One small flag around the core base per heat level beaten; new ones grow in, removed ones shrink away. */
+  setCoreFlags(colors: number[]) {
+    const kids = this.coreFlags.children;
+    kids.forEach((f, i) => { if (i >= colors.length) f.userData.leave = true; });
+    for (let i = kids.filter(f => !f.userData.leave).length; i < colors.length; i++) {
+      const f = new THREE.Group();
+      const pole = outlined(new THREE.CylinderGeometry(0.035, 0.035, 1.5, 5), toon(0x5a4a3a), 0.02);
+      pole.position.y = 0.75;
+      const cloth = new THREE.Shape();
+      cloth.moveTo(0, 0); cloth.lineTo(0.45, -0.13); cloth.lineTo(0, -0.28);
+      const pen = outlined(new THREE.ShapeGeometry(cloth), toon(colors[i]), 0.02);
+      (pen.material as THREE.Material).side = THREE.DoubleSide;
+      pen.position.y = 1.48;
+      pen.name = 'cloth';
+      f.add(pole, pen);
+      f.traverse(o => { o.raycast = noRaycast; });
+      const a = (i / 10) * Math.PI * 2 + 0.3;
+      f.position.set(Math.cos(a) * 0.95, 0.05, Math.sin(a) * 0.95);
+      f.rotation.y = -a;
+      f.userData = { age: 0, phase: i * 0.7 };
+      f.scale.setScalar(0.001);
+      this.coreFlags.add(f);
+    }
+  }
+
   coreHit() { this.coreFlash = 0.4; this.shake = 0.35; this.coreSqv += 7; }
   shakeCam(a: number) { this.shake = Math.max(this.shake, a); }
 
@@ -1407,6 +1433,14 @@ export class Renderer {
     this.coreSqv += (-300 * this.coreSq - 12 * this.coreSqv) * dt;
     this.coreSq = Math.max(-0.3, Math.min(0.4, this.coreSq + this.coreSqv * dt));
     this.core.scale.set(1 + this.coreSq * 0.4, 1 - this.coreSq * 0.7, 1 + this.coreSq * 0.4);
+    for (const f of [...this.coreFlags.children]) {
+      const u = f.userData;
+      u.age = u.leave ? Math.max(0, Math.min(u.age, 0.4) - realDt * 2) : u.age + realDt;
+      f.scale.setScalar(Math.max(0.001, easeOutBack(clamp01(u.age / 0.4))));
+      const cloth = f.getObjectByName('cloth');
+      if (cloth) cloth.rotation.y = Math.sin(t * 3 + u.phase) * 0.35;
+      if (u.leave && u.age <= 0) this.coreFlags.remove(f);
+    }
     this.coreGem.rotation.y += realDt * 0.8;
     this.coreGem.position.y = 1.15 + Math.sin(t * 2) * 0.08;
     const halo = this.core.getObjectByName('halo')!;

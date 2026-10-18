@@ -125,7 +125,20 @@ Nothing just appears.
 
 - **Seals and the Workshop.** Every run pays seals, win or lose. Put them into 13 upgrade tracks in the Workshop; some stay locked until a challenge is done. Upgrades can be refunded in full at any time between runs (one rank, or everything), so you can try different builds.
 - **Challenges.** 14 challenges, each asking you to play a different way. They unlock relics, founders and workshop tracks.
-- **Heat.** After a win, Heat levels add stacking difficulty for +20% seals per level.
+- **Heat.** After a win you can raise the heat (0–10) on the starting-bag screen. Each level adds one rule on top of the ones below it and pays +20% seals. Win at a level to unlock the next; the chosen level is remembered, shows in the top bar, and every level beaten adds a flag to the core.
+
+  | Heat | Rule |
+  |---|---|
+  | 1 | Enemies have +20% HP |
+  | 2 | Start with 3 less gold and 3 less core HP |
+  | 3 | Elites from night 2, twice as often |
+  | 4 | Act guardians have +50% HP |
+  | 5 | Treasure spots become events |
+  | 6 | Shops, relics and the premium shelf cost 25% more |
+  | 7 | Enemies chew 25% faster |
+  | 8 | One topple fewer each night |
+  | 9 | Journeys cut towers above 8 high (not 10) |
+  | 10 | The final boss gets back up once with half HP |
 
 ## Code map
 

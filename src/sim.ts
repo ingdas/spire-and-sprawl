@@ -242,6 +242,8 @@ export class Night {
   private ventCd = 6;
   done = false;
   bossRef: Enemy | null = null;
+  /** heat 10: the final boss has already got back up */
+  private bossRose = false;
 
   constructor(private board: Board, private r: Renderer, readonly wave: Wave, private hooks: SimHooks) {
     this.queue = [...wave.spawns];
@@ -343,6 +345,16 @@ export class Night {
     if (e.marked > 0) dmg *= 2;
     e.hp -= dmg;
     e.flash = 0.12;
+    if (e.hp <= 0 && e === this.bossRef && e.type === 'boss' && this.hooks.heat >= 10 && !this.bossRose) {
+      // heat 10: the boss gets back up once with half its HP
+      this.bossRose = true;
+      e.hp = e.maxHp * 0.5;
+      e.stun = 1.2;
+      this.r.shakeCam(0.5);
+      this.r.ring(this.enemyWorld(e), 3, 0xff5a3a, 0.7);
+      this.r.floatText(this.enemyWorld(e), 'It gets back up!', '#ff8a6a');
+      return;
+    }
     if (e.hp <= 0) {
       e.dead = true;
       sfx.kill();
@@ -848,7 +860,7 @@ export class Night {
       if (dist <= 0.66) {
         const blk = this.board.col(nx, ny)[0]!;
         e.chewing = { x: nx, y: ny };
-        blk.hp -= e.def.chew * dt;
+        blk.hp -= e.def.chew * dt * (this.hooks.heat >= 7 ? 1.25 : 1);
         blk.flash = 0.08;
         sfx.chew();
         if (blk.hp <= 0) this.destroyBlock(nx, ny, 0);
