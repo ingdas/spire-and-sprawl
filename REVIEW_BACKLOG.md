@@ -83,9 +83,9 @@ The rest is polish, and there's a lot of it. It's listed below.
 | ✅ 39 | Night squares use cryptic icons (◎ ◇ ■ ☁), but the legend only explains "☾ Night". | Show each night type in the legend, plus a difficulty chip on the node (1–3 skulls) and the reward chip (+10 g, relic). | P1 | S |
 | ✅ 40 | Weather badges on nodes are tiny glyphs (◐ ≈ ϟ) with no explanation. | A larger badge, and the selected node's info panel explains the weather's effect. | P2 | S |
 | ✅ 41 | The map is the first thing a brand-new player sees, before they've played a single night. | Skip the map for night 1 on a player's first run. Show the map after the first morning, with a one-line coach mark. | P1 | S |
-| 42 | The right side of the map screen is empty space on desktop. | Use it: the run so far (relics, bag summary, core HP trend) and a preview of tonight's enemies for a selected night. | P2 | S |
-| 43 | Every act has exactly the same row structure. | Vary it by act: act 2 has an elite fork, act 3 a double-shop row. Add rare hidden nodes (`?` that is a battle or a treasure). | P3 | M |
-| 44 | Choosing a node moves you instantly. | Animate the token travelling along the edge before entering the stop. | P3 | S |
+| ✅ 42 | The right side of the map screen is empty space on desktop. | Use it: the run so far (relics, bag summary, core HP trend) and a preview of tonight's enemies for a selected night. | P2 | S |
+| ✅ 43 | Every act has exactly the same row structure. | Vary it by act: act 2 has an elite fork, act 3 a double-shop row. Add rare hidden nodes (`?` that is a battle or a treasure). | P3 | M |
+| ✅ 44 | Choosing a node moves you instantly. | Animate the token travelling along the edge before entering the stop. | P3 | S |
 
 ## F. HUD, menus and clarity
 
@@ -103,7 +103,7 @@ The rest is polish, and there's a lot of it. It's listed below.
 | ✅ 54 | The night hint "Drag to look around · F for speed" is noise mid-battle. | At night the hint gives tactical tips instead ("3 enemies under the crystal tower: topple!"), or disappears. | P3 | S |
 | ✅ 55 | At dawn the threat panel briefly shows last night's wave as "Tonight" (dawn after night 8). | Hide or clear the threat panel the moment the night ends. | P2 | S |
 | ✅ 56 | Top-bar labels are 8.5 px and low-contrast in the dawn and night palette. | Raise the minimum HUD text size to 11 px and check contrast in all three palettes. | P2 | S |
-| 57 | Inspect info shows up as one line of hint text at the bottom. | A small inspect card next to the hovered tower: material stack, range, damage, combos, HP. | P2 | M |
+| ✅ 57 | Inspect info shows up as one line of hint text at the bottom. | A small inspect card next to the hovered tower: material stack, range, damage, combos, HP. | P2 | M |
 | ✅ 58 | Valid placement spots aren't shown. You only find out by hovering ("Must connect"). | While a piece is selected, faintly outline the cells where it can go. | P1 | S |
 | ✅ 59 | No undo, so one misclick costs a piece for the day. | Undo the last placement (once per day, or until the night starts). | P1 | S |
 

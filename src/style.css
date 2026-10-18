@@ -723,3 +723,26 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 
 /* stop sheets with three or more options */
 .stopsheet .contracts { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+/* map extras */
+.mapinfo .preview { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 13px; }
+.mapinfo .preview .label { width: 100%; }
+.mapinfo .preview .pv { display: inline-flex; align-items: center; gap: 4px; font-weight: 700; }
+.mapinfo .runsum { margin-top: 16px; padding-top: 10px; border-top: 1px dashed var(--ink-faint); font-size: 13px; display: grid; gap: 6px; }
+.mapinfo .runsum .callout { width: 26px; height: 26px; display: inline-grid; vertical-align: middle; margin-left: 2px; }
+.map .you { transition: left 0.45s cubic-bezier(0.5, 0, 0.3, 1), top 0.45s cubic-bezier(0.5, 0, 0.3, 1); }
+@media (max-width: 760px) { .mapinfo .runsum, .mapinfo .preview { display: none; } }
+
+/* inspect card */
+#inspect { position: absolute; z-index: 6; width: 250px; padding: 10px 12px; pointer-events: none !important; font-size: 12px; }
+#inspect > * { position: relative; z-index: 1; }
+#inspect .ln { display: grid; grid-template-columns: 12px auto 1fr; align-items: center; gap: 2px 7px; padding: 4px 0; border-top: 1px solid var(--ink-faint); }
+#inspect .ln:first-of-type { border-top: 0; }
+#inspect .sw { width: 11px; height: 11px; border: 1px solid var(--ink); }
+#inspect .ln b { font-family: var(--display); font-weight: 800; font-size: 15px; text-transform: uppercase; }
+#inspect .hp { height: 5px; border: 1px solid var(--ink-faint); justify-self: stretch; }
+#inspect .hp i { display: block; height: 100%; background: var(--ink); }
+#inspect small { grid-column: 2 / -1; color: var(--ink-soft); }
+#inspect small .cx { font-family: var(--mono); font-size: 12px; text-transform: none; color: var(--red); }
+#inspect { --ox: 10px; --oy: 0px; }
+@media (pointer: coarse) { #inspect { display: none !important; } }

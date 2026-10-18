@@ -553,6 +553,7 @@ export class Game {
     if (!run || this.phase !== 'day') return;
     this.phase = 'night';
     this.sel = -1;
+    this.fade($('inspect'), false);
     this.r.clearGhost();
     this.r.setRanges([]);
     this.r.setNight(true);
@@ -1297,6 +1298,12 @@ export class Game {
             <p class="mapnote">${nextBiome ? `After the boss your island flies to ${BIOMES[nextBiome].name} ✈` : 'The boss at the top is the final battle.'}</p>
             <div class="legend">${legend}</div>
             <div class="legend nights">${(['standard', 'calm', 'bounty', 'siege', 'skyward'] as ContractId[]).map(c => `<span><i class="f">${CONTRACTS[c].icon}</i>${CONTRACTS[c].name}</span>`).join('')}<span><i class="f">${GUARDIAN_INFO.icon}</i>Boss</span><span><i class="dgk">●</i>Danger</span></div>
+            ${fight ? this.nightPreview(sel) : ''}
+            <div class="runsum">
+              <span class="label">Your run</span>
+              <div><b>${run.relics.length}</b> relic${run.relics.length === 1 ? '' : 's'} ${run.relics.map(id => callout(id)).join('')}</div>
+              <div><b>${run.bag.length}</b> pieces · core pulse ${run.coreLevel} · ${run.stats.kills} enemies defeated</div>
+            </div>
             <div class="bagbtn">${tab(`See your bag (${run.bag.length})`, 'bag')}${tab('Settings', 'settings')}${tab('Quit to title', 'quit')}</div>
           </aside>
         </div>`,
@@ -1309,10 +1316,32 @@ export class Game {
     this.renderHud();
   }
 
-  private enterNode(n: MapNode) {
+  /** Who is likely to come on a given night, rolled from the fortress as it stands. */
+  private nightPreview(n: MapNode) {
+    const run = this.run!;
+    const w = makeWave(n.night!, run.board.stats(), CONTRACTS[n.contract ?? 'standard']);
+    const counts = new Map<EnemyId, number>();
+    for (const s of w.spawns) counts.set(s.type, (counts.get(s.type) ?? 0) + 1);
+    return `<div class="preview"><span class="label">Expect about</span>${[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t, c]) => `<span class="pv" data-tip="<b>${ENEMIES[t].name}</b><br>${ENEMIES[t].desc}">${enemyGlyph(t)}${c}</span>`).join('')}</div>`;
+  }
+
+  private enterNode(n: MapNode, travelled = false) {
     const run = this.run!;
     const m = run.map;
     if (!reachable(m).includes(n)) return;
+    // on the map, the "You" token walks to the chosen spot first
+    const token = document.querySelector<HTMLElement>('.map .you');
+    const target = document.querySelector<HTMLElement>(`.map .node[data-act="n${n.id}"]`);
+    if (!travelled && token && target && !document.body.classList.contains('reduce-motion')) {
+      if (token.dataset.moving) return;
+      token.dataset.moving = '1';
+      token.classList.remove('start');
+      token.style.left = target.style.left;
+      token.style.top = target.style.top;
+      sfx.rotate();
+      setTimeout(() => this.enterNode(n, true), 480);
+      return;
+    }
     sfx.click();
     m.at = n.id;
     m.visited.push(n.id);
@@ -1903,7 +1932,8 @@ export class Game {
 
   private updateGhost() {
     const run = this.run;
-    if (!run || this.phase !== 'day') return;
+    if (!run || this.phase !== 'day') { this.fade($('inspect'), false); return; }
+    if (this.sel >= 0) this.fade($('inspect'), false);
     if (this.sel < 0) {
       this.r.clearGhost();
       this.inspect();
@@ -1922,29 +1952,48 @@ export class Game {
     const run = this.run!;
     if (!this.lastPointer) return;
     const cell = this.r.pick(this.lastPointer.x, this.lastPointer.y);
-    if (!cell || !run.board.height(cell.x, cell.y)) { this.r.setRanges([]); this.setHint(); return; }
+    if (!cell || !run.board.height(cell.x, cell.y)) { this.r.setRanges([]); this.setHint(); this.fade($('inspect'), false); return; }
     const col = run.board.col(cell.x, cell.y);
     const rings: { x: number; y: number; r: number; color: number }[] = [];
-    let note = '';
     col.forEach((b, z) => {
       if (!b || !MATS[b.mat].turret || !run.board.exposed.has(b.id)) return;
       const footing = isFoundation(run.board.blockAt(cell.x, cell.y, z - 1)?.mat);
       rings.push({ x: cell.x, y: cell.y, r: turretRange(b.mat, z, this.has, rangeBonus(this.mods(), b.mat)) + (footing ? FOUNDATION_RANGE : 0), color: MATS[b.mat].color });
-      const n = stackBelow(run.board, cell.x, cell.y, z);
-      const parts: string[] = [];
-      if (footing) parts.push(`stands on ${MATS[run.board.blockAt(cell.x, cell.y, z - 1)!.mat].name.toLowerCase()}: +${FOUNDATION_RANGE} range`);
-      if (n) parts.push(`${MATS[b.mat].name} tower: ${n + 1} stacked · ${b.mat === 'ward' ? `+${(0.3 * n).toFixed(1)} range` : `+${Math.round(STACK_BONUS * n * 100)}% damage`}`);
-      const touching = new Set<MatId>();
-      for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
-        const nb = run.board.blockAt(cell.x + dx, cell.y + dy, z + dz);
-        if (nb) touching.add(nb.mat);
-      }
-      const rx = reactionOf(b.mat, touching);
-      if (rx) parts.push(`✦ ${REACTIONS[rx].name}: ${REACTIONS[rx].desc}`);
-      if (parts.length) note = parts.join(' · ');
     });
     this.r.setRanges(rings);
-    this.setHint(note || undefined);
+    this.setHint();
+    this.showInspect(cell.x, cell.y);
+  }
+
+  /** A small card beside the hovered tower: what it's made of and what it does. */
+  private showInspect(x: number, y: number) {
+    const run = this.run!, b = run.board;
+    const el = $('inspect');
+    const col = b.col(x, y);
+    const rows = col.map((blk, z) => {
+      if (!blk) return '';
+      const parts: string[] = [];
+      if (MATS[blk.mat].turret && b.exposed.has(blk.id)) {
+        const footing = isFoundation(b.blockAt(x, y, z - 1)?.mat);
+        const range = turretRange(blk.mat, z, this.has, rangeBonus(this.mods(), blk.mat)) + (footing ? FOUNDATION_RANGE : 0);
+        parts.push(`range ${range.toFixed(1)}`);
+        const n = stackBelow(b, x, y, z);
+        if (n) parts.push(blk.mat === 'ward' ? `+${(0.3 * n).toFixed(1)} reach` : `+${Math.round(STACK_BONUS * n * 100)}% dmg`);
+        if (footing) parts.push('on stone');
+        const touching = new Set<MatId>();
+        for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) { const nb = b.blockAt(x + dx, y + dy, z + dz); if (nb) touching.add(nb.mat); }
+        const rx = reactionOf(blk.mat, touching);
+        if (rx) parts.push(`<b class="cx">${REACTIONS[rx].name}</b>`);
+      } else if (MATS[blk.mat].turret) parts.push('<i>buried: not firing</i>');
+      const hp = `<span class="hp"><i style="width:${(blk.hp / blk.maxHp) * 100}%"></i></span>`;
+      return `<div class="ln"><span class="sw" style="background:#${MATS[blk.mat].color.toString(16).padStart(6, '0')}"></span><b>${MATS[blk.mat].name}</b>${hp}<small>${parts.join(' · ')}</small></div>`;
+    }).reverse().join('');
+    el.innerHTML = `<span class="label">Tower · ${col.filter(Boolean).length} tall</span>${rows}`;
+    const p = this.lastPointer!;
+    const w = el.offsetWidth || 240, h = el.offsetHeight || 120;
+    el.style.left = `${Math.min(window.innerWidth - w - 12, p.x + 22)}px`;
+    el.style.top = `${Math.max(12, Math.min(window.innerHeight - h - 160, p.y - h / 2))}px`;
+    this.fade(el, true);
   }
 
   private tryPlace() {

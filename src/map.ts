@@ -92,6 +92,17 @@ export function makeMap(act: number, opts: { treasure: boolean }): ActMap {
   const pre = rows[LAYOUT.length - 2];
   const kinds = shuffle(pre.map(n => n.kind));
   pre.forEach((n, i) => (n.kind = kinds[i]));
+  // later acts get sharper: act 2 always offers a hard night on every battle row,
+  // act 3 trades the pre-boss rest for two shops (spend everything before the end)
+  if (act >= 1) for (const r of rows) {
+    if (r.length < 3 || r[0].kind !== 'battle') continue;
+    if (!r.some(n => n.contract === 'siege' || n.contract === 'skyward')) pick(r.filter(n => n.contract !== 'standard')).contract = Math.random() < 0.5 ? 'siege' : 'skyward';
+  }
+  if (act === 2) {
+    const pre = rows[LAYOUT.length - 2];
+    const shops = pre.filter(n => n.kind === 'shop').length;
+    if (shops < 2) { const other = pre.find(n => n.kind !== 'shop' && n.kind !== 'camp'); if (other) other.kind = 'shop'; }
+  }
   if (!opts.treasure) for (const n of nodes) if (n.kind === 'treasure') n.kind = 'event';
   // edges: straight up the lane, plus at most one diagonal per lane gap so paths never cross
   for (let r = 0; r < rows.length - 1; r++) {
