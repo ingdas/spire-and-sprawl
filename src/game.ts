@@ -1,0 +1,1390 @@
+import * as THREE from 'three';
+import { isMuted, setMuted, sfx } from './audio';
+import { Board, Placement } from './board';
+import { ENEMIES, EnemyId, HAND_SIZE, MATS, MatId, NIGHTS, START_CORE_HP, START_GOLD, UNIQUES } from './config';
+import { CODEX, CodexDef, HEATS, Meta, RelicId, RunStats, SEALS, UPGRADES, relicDef } from './meta';
+import { FOUNDERS, FounderId, Piece, make, pivotOf, randomPiece, rotatePiece, uniquePiece } from './pieces';
+import { Renderer, world } from './render';
+import { AIMS, Aim, CONTRACTS, ContractId, Night, REACTIONS, WEATHER, STACK_BONUS, Wave, makeWave, rangeBonus, reactionOf, stackBelow, turretRange } from './sim';
+import { BIOMES, BiomeDef, BiomeId, actOf, randomCells, rollRoute } from './biomes';
+import { badge, blankPlate, callout, compass, detail, enemyGlyph, flushDrawings, impression, ledgerLine, plate, sec, sheet, stamp, tab } from './ui';
+
+type Phase = 'title' | 'day' | 'night' | 'dawn' | 'end';
+
+interface Run {
+  board: Board;
+  founder: FounderId;
+  bag: Piece[];
+  draw: Piece[];
+  hand: Piece[];
+  used: boolean[];
+  gold: number;
+  coreHp: number;
+  coreMax: number;
+  day: number;
+  relics: RelicId[];
+  stats: RunStats;
+  wave: Wave;
+  handSize: number;
+  // dawn state
+  draft: Piece[];
+  draftPick: number; // -1 open, -2 waived, else index
+  treasure: RelicId[];
+  treasurePick: number;
+  platesEarned: number;
+  redraws: number;
+  demolishes: number;
+  /** piece saved from today's hand for tomorrow */
+  keep: Piece | null;
+  keptIdx: number;
+  topples: number;
+  keystone: boolean;
+  heat: number;
+  coreLevel: number;
+  route: BiomeId[];
+  act: number;
+  vents: { x: number; y: number }[];
+  shop: RelicId[];
+  shopSold: boolean[];
+  market: Piece[];
+  marketSold: boolean[];
+  income: [string, number][];
+  contract: ContractId;
+  event: EventId | null;
+  eventDone: string;
+  offers: ContractId[];
+}
+
+const SIDE_NAMES = ['North', 'East', 'South', 'West'];
+
+type EventId = 'merchant' | 'shrine' | 'gambler' | 'quarry';
+const EVENTS: EventId[] = ['merchant', 'shrine', 'gambler', 'quarry'];
+const EVENT_TEXT: Record<EventId, { icon: string; title: string; text: string; yes: string }> = {
+  merchant: { icon: '★', title: 'A wandering merchant', text: 'She sells one unique block for 6 gold.', yes: 'Buy · 6 g' },
+  shrine: { icon: '✚', title: 'An old shrine', text: 'Offer 3 core HP to receive a random relic.', yes: 'Offer 3 HP' },
+  gambler: { icon: '◎', title: 'A gambler', text: 'Bet 5 gold: half the time you win 12.', yes: 'Bet · 5 g' },
+  quarry: { icon: '▲', title: 'A quarry', text: 'Take a 2-tall rock pillar piece for free. Rock is very tough.', yes: 'Take it' },
+};
+/** Towers taller than this lose their tops on the journey between biomes. */
+const JOURNEY_MAX_H = 10;
+const DEMOLISH_PER_DAY = 2;
+const FORGE_COST = 6;
+const DROP_COST = 3;
+const INTEREST_CAP = 3;
+const GILD_HP = 1.5;
+const $ = (id: string) => document.getElementById(id)!;
+const shuffle = <T>(a: T[]) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+
+export class Game {
+  r: Renderer;
+  meta = new Meta();
+  phase: Phase = 'title';
+  run: Run | null = null;
+  night: Night | null = null;
+  speed = 1;
+  sel = -1;
+  rot = 0;
+  private lastPointer: { x: number; y: number } | null = null;
+  private downAt: { x: number; y: number; b: number } | null = null;
+  private hint = '';
+  private touchPreview = '';
+  private toppleDir: number | null = null;
+  private toppleKey = '';
+  private ghostKey = '';
+  private aimTick = 0;
+  private demolishing = false;
+  private demoKey = '';
+  private dropping = false;
+  private aim: Aim = 'first';
+  private last = performance.now();
+
+  constructor() {
+    this.r = new Renderer($('app'));
+    this.bindInput();
+    this.bindTooltips();
+    this.showTitle();
+    requestAnimationFrame(t => this.frame(t));
+  }
+
+  get has() { return (id: RelicId) => !!this.run?.relics.includes(id); }
+
+  // ======================= loop =======================
+
+  private frame(t: number) {
+    const dt = Math.min(0.05, (t - this.last) / 1000);
+    this.last = t;
+    let simDt = dt;
+    if (this.phase === 'title') this.r.autoOrbit(dt);
+    if (this.phase === 'night' && this.night && this.run) {
+      simDt = dt * this.speed;
+      for (let i = 0; i < this.speed && this.phase === 'night'; i++) this.night.update(dt);
+      this.r.tintBlocks(this.run.board);
+      this.updateNightHud();
+      // enemies move under the aim, so refresh the crush preview a few times a second
+      if ((this.aimTick += dt) > 0.2 && !this.dropping) { this.aimTick = 0; this.updateToppleGhost(); }
+      if (this.phase === 'night' && this.night.done) this.endNight();
+    }
+    this.r.update(dt, simDt);
+    requestAnimationFrame(tt => this.frame(tt));
+  }
+
+  // ======================= title & menus =======================
+
+  showTitle() {
+    this.phase = 'title';
+    this.night?.dispose();
+    this.night = null;
+    this.run = null;
+    this.r.setBiome(BIOMES.meadow);
+    $('hud').classList.add('hidden');
+    this.r.setNight(false);
+    this.r.clearAll();
+    this.buildDemo();
+    const m = this.meta;
+    this.overlay(`
+      <section class="paper sheet cover">
+        <h1>Spire<br><span class="amp">&amp;</span>Sprawl</h1>
+        <p class="note lede">Build a fortress on a floating island and survive ${NIGHTS} nights. Build tall to shoot far, or wide to earn gold.</p>
+        <nav class="toc">
+          <button class="first" data-act="start"><span class="t">Play</span><span class="lead"></span><span class="p">▶</span></button>
+          <button data-act="atelier"><span class="t">Workshop</span><span class="lead"></span><span class="p">${m.seals} ✠ to spend</span></button>
+          <button data-act="codex"><span class="t">Challenges</span><span class="lead"></span><span class="p">${m.unlocked.size} / ${CODEX.length} done</span></button>
+          <button data-act="howto"><span class="t">How to play</span><span class="lead"></span><span class="p">?</span></button>
+        </nav>
+        ${m.runs ? `<div class="foot"><span class="label">Runs ${m.runs} · Wins ${m.wins} · Best night ${m.bestNight || '—'}</span></div>` : ''}
+      </section>`, false, {
+      start: () => { this.fullscreen(); this.showFounders(); },
+      atelier: () => this.showAtelier(() => this.showTitle()),
+      codex: () => this.showCodex(),
+      howto: () => this.showHowTo(),
+    });
+  }
+
+  private buildDemo() {
+    const b = new Board();
+    const pool = this.meta.matPool();
+    for (let i = 0, placed = 0; i < 400 && placed < 26; i++) {
+      const p = randomPiece(pool);
+      const blocks = rotatePiece(p.blocks, Math.floor(Math.random() * 4));
+      const pl = b.evaluate(blocks, Math.floor(Math.random() * 13) - 1, Math.floor(Math.random() * 13) - 1);
+      if (pl.ok) { b.place(pl, () => 1); placed++; }
+    }
+    this.r.syncBoard(b);
+  }
+
+  private showFounders() {
+    sfx.click();
+    const avail = this.meta.founders();
+    const all: FounderId[] = ['settler', 'spirewright', 'sprawler', 'pyromancer', 'quarryman'];
+    const m = this.meta;
+    const maxHeat = m.maxHeat();
+    m.heat = Math.min(m.heat, maxHeat);
+    if (avail.length === 1 && !maxHeat) return this.startRun('settler');
+    const lockHint: Record<FounderId, string> = { settler: '', spirewright: 'Unlock: complete the “Skyscraper” challenge.', sprawler: 'Unlock: win a run.', pyromancer: 'Unlock: complete the “First Light” challenge.', quarryman: 'Unlock: complete the “Avalanche” challenge.' };
+    const signature: Record<FounderId, number> = { settler: 8, spirewright: 2, sprawler: 0, quarryman: 3, pyromancer: 3 };
+    const acts: Record<string, () => void> = {
+      f_settler: () => this.startRun('settler'),
+      f_spirewright: () => this.startRun('spirewright'),
+      f_sprawler: () => this.startRun('sprawler'),
+      f_pyromancer: () => this.startRun('pyromancer'),
+      f_quarryman: () => this.startRun('quarryman'),
+      back: () => this.showTitle(),
+    };
+    for (let h = 0; h <= maxHeat; h++) acts[`h${h}`] = () => { m.heat = h; this.showFounders(); };
+    const heatRow = maxHeat ? `${sec('ϟ', 'Heat', `+20% seals per level`)}
+      <div class="heat">${Array.from({ length: maxHeat + 1 }, (_, h) => `<button class="chip ${m.heat === h ? 'on' : ''}" data-act="h${h}">${h || 'Off'}</button>`).join('')}</div>
+      <ul class="heat-rules">${HEATS.slice(0, m.heat).map(r => `<li>${r}</li>`).join('') || '<li>No extra rules.</li>'}</ul>` : '';
+    this.overlay(sheet({
+      kicker: 'New run',
+      title: 'Pick your starting bag',
+      note: 'This decides which pieces you begin with.',
+      body: `<div class="heatbox">${heatRow}</div><div class="grid-row" style="margin-top:18px">${all.map(f => avail.includes(f)
+        ? plate({ name: FOUNDERS[f].name, blocks: FOUNDERS[f].bag()[signature[f]].blocks }, { no: `${FOUNDERS[f].bag().length} pieces`, act: `f_${f}`, desc: FOUNDERS[f].desc })
+        : blankPlate('', FOUNDERS[f].name, lockHint[f])).join('')}</div>`,
+      foot: `${tab('Back', 'back')}<span class="label">Click one to start</span>`,
+    }), true, acts);
+    flushDrawings($('overlay'));
+  }
+
+  private showAtelier(back: () => void) {
+    sfx.click();
+    const m = this.meta;
+    const acts: Record<string, () => void> = { back };
+    const rows = UPGRADES.map(u => {
+      const rank = m.rank(u.id);
+      const maxed = rank >= u.costs.length;
+      const locked = !!u.locked && !m.has(u.locked);
+      const cost = maxed ? 0 : u.costs[rank];
+      acts[`u_${u.id}`] = () => { if (m.buy(u.id)) { sfx.unlock(); this.showAtelier(back); } };
+      const pips = u.costs.map((_, i) => `<i class="${i < rank ? 'on' : ''}"></i>`).join('');
+      const lockPlate = locked ? CODEX.find(c => c.id === u.locked)! : null;
+      return `<div class="up ${locked ? 'locked' : ''} ${maxed ? 'maxed' : ''}">
+        ${badge(locked ? '✕' : u.icon)}
+        <div class="body">
+          <div class="top"><span class="nm">${u.name}</span><span class="pips">${pips}</span></div>
+          <div class="ds">${locked ? `Locked. Complete the challenge <b>${lockPlate!.name}</b>: ${lockPlate!.req}` : maxed ? `${u.desc(rank)} <b>(max)</b>` : `${rank ? 'Next: ' : ''}${u.desc(rank + 1)}`}</div>
+          ${locked || maxed ? '' : `<div class="buy">${rank ? `<span class="label">now: ${u.desc(rank)}</span>` : '<span></span>'}${tab(`Buy · ${cost} ✠`, `u_${u.id}`, { disabled: m.seals < cost, red: true })}</div>`}
+        </div>
+      </div>`;
+    }).join('');
+    this.overlay(sheet({
+      kicker: '',
+      title: 'Workshop',
+      note: 'Upgrades here last forever. You earn seals ✠ every run, even when you lose.',
+      headRight: `<div class="bigstat"><span class="label">Seals</span><b>${m.seals} ✠</b></div>`,
+      body: `<div class="atelier">${rows}</div>`,
+      foot: `${tab('Back', 'back')}<span class="label">Earn seals: 1 per night survived · +6 per challenge · +8 for a win</span>`,
+    }), true, acts);
+  }
+
+  private codexPlate(c: CodexDef, done: boolean) {
+    return `<div class="cx ${done ? 'done' : ''} ${c.id === 'grand_architect' ? 'capstone' : ''}">
+      <div class="nm">${c.name}</div>
+      <div class="row goal">${c.req}</div>
+      <div class="row"><span class="label">Reward</span>${c.reward} <b>+${SEALS.plate} ✠</b></div>
+      ${done ? impression('Done') : ''}
+    </div>`;
+  }
+
+  private showCodex() {
+    sfx.click();
+    const m = this.meta;
+    const order = [...CODEX.filter(c => c.id !== 'grand_architect'), CODEX.find(c => c.id === 'grand_architect')!];
+    this.overlay(sheet({
+      kicker: '',
+      title: 'Challenges',
+      note: 'Each challenge asks you to play a different way. Completing them unlocks new relics, pieces and workshop upgrades.',
+      headRight: `<div class="bigstat"><span class="label">Done</span><b>${m.unlocked.size} / ${CODEX.length}</b></div>`,
+      body: `<div class="codex">${order.map(c => this.codexPlate(c, m.has(c.id))).join('')}</div>`,
+      foot: `${tab('Back', 'back')}${tab('Reset all progress', 'reset', { red: true })}`,
+    }), true, {
+      back: () => this.showTitle(),
+      reset: () => this.ask('Reset everything?', 'This erases all challenges, seals and workshop upgrades. It cannot be undone.', 'Erase', () => { this.meta.reset(); this.showCodex(); }),
+    });
+  }
+
+  private showHowTo() {
+    sfx.click();
+    const item = (n: string, t: string, body: string) => `<div class="item"><h4><span>${n}</span>${t}</h4><p>${body}</p></div>`;
+    this.overlay(sheet({
+      kicker: '',
+      title: 'How to play',
+      note: `Protect the pink core for ${NIGHTS} nights.`,
+      body: `<div class="manual">
+        ${item('1', 'Build by day', `You get ${HAND_SIZE} pieces each day. A piece lands on top of whatever is below it, so you can build <b>up</b> or <b>out</b>. Pieces must touch your buildings or the core. You can <b>keep</b> one piece for tomorrow and <b>demolish</b> 2 blocks a day.`)}
+        ${item('2', 'Survive the night', 'Enemies come from the <b class="red">red</b> sides. They chew through the <b>bottom</b> block of a column to reach the core.')}
+        ${item('3', 'Tall towers', 'Turrets shoot further the higher they are. Stack the same material to make it stronger: three crystals on top of each other hit harder than one.')}
+        ${item('4', 'Topple!', 'At night, click a tower to knock it over. Every block that lands on an enemy crushes it, and the tower becomes a wall. What it is made of matters: ember splashes fire, crystal shatters into shards, ward leaves a slow field, garden drops gold. You get one topple per night.')}
+        ${item('✦', 'Combos', 'Some blocks react when they touch (sides, above or below): crystal + ward = frost beams that slow, crystal + ember = spark beams that splash fire, ember + garden = smoke shells that slow. Hover a tower in the day to see its combos.')}
+        ${item('◎', 'Gold tips', 'Every 10 gold you save earns +1 at dawn (up to +3). Starting the night with pieces still in hand pays +1 gold each. At night you can drop an emergency stone for 3 gold, and at dawn you can make the core pulse hit harder.')}
+        ${item('ϟ', 'Weather', 'Some nights have weather: fog shortens turret range, thunderstorms strike your tallest tower (put a crystal on top to turn it into a weapon!), and a full moon makes enemies faster but pays extra gold. Check the Tonight panel.')}
+        ${item('★', 'Unique blocks', 'Sometimes a single special block shows up in the morning: the Anvil, Bell, Powder Keg, Omen Stone, Fountain or Mirror. Each one has its own rule, so build around it!')}
+        ${item('✈', 'Journeys', 'After nights 4 and 8 your island flies to a new land (Dunes, Glacier or Caldera) with new rules. On the way, blocks on the outer edge break off and very tall towers lose their tops.')}
+        ${item('5', 'Wide bases', 'Gardens on the ground earn gold every morning. Every block is a wall enemies must chew through.')}
+        ${item('6', 'Watch out', '<b class="red">Sappers</b> tunnel to your tallest tower and blow up its base. <b class="red">Brutes</b> show up more when you build wide.')}
+        ${item('7', 'Each morning', 'Pick a free piece, then spend gold on relics (special powers), new pieces or core repairs.')}
+        ${item('8', 'Seals & workshop', 'Every run earns seals ✠, even if you lose. Spend them in the workshop on permanent upgrades. Challenges give the most seals.')}
+        ${item('⌨', 'Controls', '<kbd>Click</kbd> place / topple · <kbd>R</kbd> rotate · drag to look around · <kbd>Q</kbd><kbd>E</kbd> turn the camera · <kbd>1</kbd>–<kbd>5</kbd> pick a piece · <kbd>K</kbd> keep for tomorrow · <kbd>X</kbd> demolish · <kbd>Space</kbd> start the night · <kbd>F</kbd> speed · <kbd>M</kbd> mute')}
+      </div>`,
+      foot: `${tab('Back', 'back')}`,
+    }), true, { back: () => this.showTitle() });
+  }
+
+  // ======================= run lifecycle =======================
+
+  startRun(founder: FounderId) {
+    sfx.click();
+    this.r.clearAll();
+    const meta = this.meta;
+    const hot = meta.heat >= 2 ? 3 : 0;
+    const coreMax = START_CORE_HP + (meta.has('untouched') ? 3 : 0) + 2 * meta.rank('foundations') - hot;
+    this.run = {
+      board: new Board(), founder, bag: FOUNDERS[founder].bag(), draw: [], hand: [], used: [],
+      gold: Math.max(0, START_GOLD + 2 * meta.rank('treasury') - hot), coreHp: coreMax, coreMax, day: 1, relics: [],
+      stats: { nights: 0, maxTallest: 0, maxHollows: 0, fallKills: 0, kills: 0, placedMats: new Set(), coreDamaged: false, finalFootprint: 0, finalMats: new Set(), won: false, maxChain: 1, calderaNights: 0, maxUniques: 0 },
+      route: rollRoute(), act: 0, heat: meta.heat, coreLevel: 0, vents: [], wave: makeWave(1), handSize: HAND_SIZE + (meta.has('grand_architect') ? 1 : 0),
+      draft: [], draftPick: -1, treasure: [], treasurePick: -1, platesEarned: 0, redraws: 0, demolishes: 0, keep: null, keptIdx: -1, topples: 0, keystone: meta.rank('keystone') > 0, shop: [], shopSold: [], market: [], marketSold: [], income: [], contract: 'standard', offers: [], event: null, eventDone: '',
+    };
+    const gifts = (meta.has('grand_architect') ? 1 : 0) + meta.rank('cartouche');
+    for (const id of this.relicChoices(gifts)) { this.addRelic(id); this.toast(`Starting relic: ${relicDef(id).name}.`); }
+    this.overlay('');
+    $('hud').classList.remove('hidden');
+    this.r.syncBoard(this.run.board);
+    this.r.setBiome(this.biome);
+    this.startDay();
+  }
+
+  // ======================= journey between biomes =======================
+
+  /** The island is carried to the next biome: pay the travel damage, land, read the new rules. */
+  private showJourney() {
+    const run = this.run!;
+    run.act = actOf(run.day);
+    const b = this.biome;
+    const lost = run.board.journeyDamage(JOURNEY_MAX_H);
+    // the new landscape
+    run.vents = [];
+    for (const c of randomCells(b.outcrops, 3, (x, y) => run.board.height(x, y) > 0)) run.board.addTerrain(c.x, c.y, 1 + Math.floor(Math.random() * 2), 'rock', MATS.rock.hp);
+    run.vents = randomCells(b.vents, 3, (x, y) => run.board.height(x, y) > 0);
+    this.rehp();
+    this.r.setBiome(b);
+    this.r.setVents(run.vents);
+    this.r.syncBoard(run.board);
+    this.r.shakeCam(0.5);
+    sfx.nightStart();
+    this.trackStats();
+    const damage = lost.rim + lost.tops
+      ? `The trip cost you ${lost.rim ? `${lost.rim} block${lost.rim > 1 ? 's' : ''} from the rim` : ''}${lost.rim && lost.tops ? ' and ' : ''}${lost.tops ? `${lost.tops} block${lost.tops > 1 ? 's' : ''} from tower tops` : ''}.`
+      : 'Your fortress made the trip without a scratch.';
+    this.overlay(sheet({
+      kicker: `Act ${run.act + 1} of 3 · the island has moved`,
+      title: b.name,
+      note: b.tagline,
+      body: `<div class="rules">${b.rules.map(([i, t]) => `<div class="brule"><span class="ic">${i}</span><span>${t}</span></div>`).join('')}</div>
+        <p class="journey-loss">${damage}</p>`,
+      foot: `<span class="label">Next: ${run.route[run.act + 1] ? `then ${BIOMES[run.route[run.act + 1]].name}` : 'the final act'}</span>${stamp('Land', 'land')}`,
+      cls: 'journey',
+    }), true, { land: () => { sfx.click(); this.startDay(); } });
+  }
+
+  private startDay() {
+    const run = this.run!;
+    this.phase = 'day';
+    this.r.setNight(false);
+    this.overlay('');
+    this.drawHand();
+    run.redraws = this.meta.rank('redraft');
+    run.demolishes = DEMOLISH_PER_DAY;
+    this.demolishing = false;
+    this.sel = -1;
+    this.rot = 0;
+    this.r.setTelegraph(run.wave.sides);
+    this.banner(`${run.day} of ${NIGHTS}`, 'Day', run.wave.guardian ? `tonight: ${ENEMIES[run.wave.guardian].name}` : 'time to build');
+    this.renderHud();
+    if (run.day === 1) this.selectCard(0);
+  }
+
+  private drawHand() {
+    const run = this.run!;
+    run.hand = run.keep ? [run.keep] : [];
+    const size = run.handSize + (run.keep ? 1 : 0);
+    run.keep = null;
+    run.keptIdx = -1;
+    for (let i = run.hand.length; i < size; i++) {
+      if (!run.draw.length) run.draw = shuffle(run.bag.filter(p => !run.hand.includes(p)));
+      const p = run.draw.pop();
+      if (p && !run.hand.includes(p)) run.hand.push(p);
+    }
+    run.used = run.hand.map(() => false);
+  }
+
+  private beginNight() {
+    const run = this.run;
+    if (!run || this.phase !== 'day') return;
+    this.phase = 'night';
+    this.sel = -1;
+    this.r.clearGhost();
+    this.r.setRanges([]);
+    this.r.setNight(true);
+    sfx.nightStart();
+    // starting early pays: +1 gold per piece left unplaced
+    const early = run.used.filter(u => !u).length;
+    if (early) { run.gold += early; this.toast(`Early start: +${early} gold.`); }
+    this.dropping = false;
+    run.topples = 1 + this.meta.rank('leverage') + (CONTRACTS[run.contract].topple ?? 0) + (this.has('tipping_point') ? 1 : 0);
+    if (this.has('storm_caller') && !run.wave.guardian) run.wave.weather = 'storm';
+    this.toppleDir = null;
+    this.night = new Night(run.board, this.r, run.wave, {
+      has: this.has,
+      mods: this.mods(),
+      biome: this.biome,
+      heat: run.heat,
+      coreLevel: run.coreLevel,
+      chain: n => { run.stats.maxChain = Math.max(run.stats.maxChain, n); this.checkCodex(false); },
+      aim: () => this.aim,
+      vents: run.vents,
+      gold: (n, at) => { run.gold += n; sfx.coin(); if (at) this.r.floatText(at.clone().add(new THREE.Vector3(0, 0.6, 0)), `+${n}`, '#f7c948'); this.renderTop(); },
+      coreDamage: n => this.coreDamage(n),
+      onKill: fall => { run.stats.kills++; if (fall) run.stats.fallKills++; },
+      boardChanged: () => { this.r.syncBoard(run.board); this.trackStats(); },
+    });
+    this.banner(`${run.day} of ${NIGHTS}`, 'Night', run.wave.guardian ? `the ${ENEMIES[run.wave.guardian].name.toLowerCase()} is coming` : `attack from the ${run.wave.sides.map(s => SIDE_NAMES[s]).join(' & ')}`);
+    this.renderHud();
+  }
+
+  private get biome(): BiomeDef { return BIOMES[this.run?.route[this.run.act] ?? 'meadow']; }
+
+  private mods() {
+    const m = this.meta, b = this.biome;
+    return { crystal: 1 + 0.1 * m.rank('lens'), ember: (1 + 0.1 * m.rank('kiln')) * b.emberMult, range: 0.25 * m.rank('eye'), crystalRange: b.crystalRange };
+  }
+
+  private coreDamage(n: number) {
+    const run = this.run!;
+    run.coreHp = Math.max(0, run.coreHp - n);
+    if (run.coreHp <= 0 && run.keystone) {
+      run.keystone = false;
+      run.coreHp = 3;
+      this.toast('The keystone holds. The core stands at 3.', true);
+    }
+    run.stats.coreDamaged = true;
+    this.r.coreHit();
+    sfx.coreHit();
+    this.renderTop();
+    if (run.coreHp <= 0) this.endRun(false);
+  }
+
+  /** Save the selected piece: it skips today and joins tomorrow's hand as an extra. */
+  private keepPiece() {
+    const run = this.run;
+    if (!run || this.phase !== 'day' || this.sel < 0 || run.keep) return;
+    run.keep = run.hand[this.sel];
+    run.keptIdx = this.sel;
+    run.used[this.sel] = true;
+    this.sel = -1;
+    sfx.place();
+    this.r.clearGhost();
+    this.renderHud();
+    const next = run.used.findIndex(u => !u);
+    if (next >= 0) this.selectCard(next);
+  }
+
+  // ======================= emergency stone (night) =======================
+
+  private toggleDrop() {
+    const run = this.run;
+    if (!run || this.phase !== 'night') return;
+    this.dropping = !this.dropping && run.gold >= DROP_COST;
+    this.ghostKey = '';
+    this.r.clearGhost();
+    sfx.click();
+    this.renderActions();
+    this.setHint(this.dropping ? `${matchMedia('(pointer: coarse)').matches ? 'Tap a spot twice' : 'Click a spot'} next to your fortress to drop a stone (${DROP_COST} gold). It crushes whatever is under it.` : undefined);
+  }
+
+  private dropPlacement() {
+    const run = this.run;
+    if (!run || !this.lastPointer) return null;
+    const cell = this.r.pick(this.lastPointer.x, this.lastPointer.y);
+    return cell ? run.board.evaluate([{ x: 0, y: 0, z: 0, mat: 'stone' }], cell.x, cell.y) : null;
+  }
+
+  private tryDrop(touch: boolean) {
+    const run = this.run!;
+    const p = this.dropPlacement();
+    if (!p || !p.cells.length) return;
+    const key = `${p.cells[0].x},${p.cells[0].y}`;
+    if (touch && this.demoKey !== key) { this.demoKey = key; this.r.setGhost(p.cells, p.ok); return; }
+    this.demoKey = '';
+    if (!p.ok || run.gold < DROP_COST) { sfx.invalid(); return; }
+    run.gold -= DROP_COST;
+    run.board.place(p, this.hpMult);
+    this.r.syncBoard(run.board);
+    this.night!.crushAt(p.cells[0].x, p.cells[0].y);
+    this.r.clearGhost();
+    if (run.gold < DROP_COST) this.dropping = false;
+    this.renderTop();
+    this.renderActions();
+    this.setHint();
+  }
+
+  // ======================= demolish =======================
+
+  private toggleDemolish() {
+    const run = this.run;
+    if (!run || this.phase !== 'day') return;
+    this.demolishing = !this.demolishing && run.demolishes > 0;
+    this.sel = -1;
+    this.demoKey = '';
+    this.r.clearGhost();
+    this.r.setRanges([]);
+    sfx.click();
+    this.renderHand();
+    this.renderActions();
+    this.setHint();
+  }
+
+  private demolishTarget() {
+    const run = this.run;
+    if (!run || !this.lastPointer) return null;
+    const hit = this.r.pickBlock(this.lastPointer.x, this.lastPointer.y);
+    if (!hit) return null;
+    const z = run.board.col(hit.x, hit.y).findIndex(b => b?.id === hit.id);
+    if (z < 0) return null;
+    return { x: hit.x, y: hit.y, z, mat: run.board.col(hit.x, hit.y)[z]!.mat };
+  }
+
+  private updateDemolishGhost() {
+    const t = this.demolishTarget();
+    if (!t) { this.r.clearGhost(); return; }
+    this.r.setGhost([t], false);
+  }
+
+  private tryDemolish(touch: boolean) {
+    const run = this.run!;
+    const t = this.demolishTarget();
+    if (!t || run.demolishes <= 0) return;
+    // on touch, the first tap only highlights the block
+    const key = `${t.x},${t.y},${t.z}`;
+    if (touch && this.demoKey !== key) { this.demoKey = key; this.updateDemolishGhost(); return; }
+    this.demoKey = '';
+    run.board.destroy(t.x, t.y, t.z);
+    run.demolishes--;
+    this.r.syncBoard(run.board);
+    this.r.clearGhost();
+    sfx.crumble();
+    this.r.shakeCam(0.1);
+    this.trackStats();
+    if (!run.demolishes) this.demolishing = false;
+    this.renderHud();
+  }
+
+  // ======================= topple =======================
+
+  /** The tower under the pointer, and which way it would fall. Auto-aims at the most enemies unless the player turned it. */
+  private toppleAim(): { x: number; y: number; d: number; cells: { x: number; y: number; z: number; mat: MatId }[] } | null {
+    const run = this.run, night = this.night;
+    if (!run || !night || this.phase !== 'night' || run.topples <= 0 || !this.lastPointer) return null;
+    const cell = this.r.pickBlock(this.lastPointer.x, this.lastPointer.y);
+    if (!cell || !run.board.canTopple(cell.x, cell.y)) return null;
+    const key = `${cell.x},${cell.y}`;
+    if (this.toppleKey !== key) { this.toppleKey = key; this.toppleDir = null; }
+    let d = this.toppleDir ?? 0;
+    if (this.toppleDir === null) {
+      let best = -1;
+      for (let i = 0; i < 4; i++) {
+        const cells = run.board.toppleCells(cell.x, cell.y, i);
+        const score = night.enemiesOn(cells) * 10 + cells.filter(c => c.z >= 0).length;
+        if (score > best) { best = score; d = i; }
+      }
+    }
+    return { ...cell, d, cells: run.board.toppleCells(cell.x, cell.y, d) };
+  }
+
+  private updateToppleGhost() {
+    const aim = this.toppleAim();
+    if (!aim) {
+      if (this.ghostKey) { this.ghostKey = ''; this.r.clearGhost(); }
+      $('actions').querySelector<HTMLButtonElement>('[data-act=turn]')?.setAttribute('disabled', '');
+      this.setHint();
+      return;
+    }
+    const kept = aim.cells.filter(c => c.z >= 0);
+    const key = `${aim.x},${aim.y},${aim.d},${this.run!.board.version}`;
+    if (key !== this.ghostKey) { this.ghostKey = key; this.r.setGhost(kept, true); }
+    const hits = this.night!.enemiesOn(kept);
+    const chain = kept.some(c => c.z >= 2) ? ' · knocks over the next tower!' : '';
+    const touch = matchMedia('(pointer: coarse)').matches;
+    this.setHint(`${touch ? 'Tap again' : 'Click'} to topple ${SIDE_NAMES[aim.d].toLowerCase()}${hits ? ` · crushes ${hits} enem${hits > 1 ? 'ies' : 'y'}` : ''}${chain} · ${touch ? 'Turn ↻' : 'R'} to change direction`);
+    $('actions').querySelector<HTMLButtonElement>('[data-act=turn]')?.removeAttribute('disabled');
+  }
+
+  private tryTopple() {
+    const aim = this.toppleAim();
+    if (!aim) return;
+    const run = this.run!;
+    run.topples--;
+    this.night!.topple(aim.x, aim.y, aim.d);
+    if (this.has('tipping_point')) { run.gold += 2; this.renderTop(); }
+    this.toppleKey = '';
+    this.r.clearGhost();
+    this.renderActions();
+    this.updateToppleGhost();
+  }
+
+  private turnTopple() {
+    const aim = this.toppleAim();
+    if (!aim) return;
+    this.toppleDir = (aim.d + 1) % 4;
+    sfx.rotate();
+    this.updateToppleGhost();
+  }
+
+  private endNight() {
+    const run = this.run!;
+    this.night?.dispose();
+    this.r.clearGhost();
+    this.night = null;
+    $('bossbar').classList.add('hidden');
+    run.stats.nights = run.day;
+    if (this.biome.id === 'caldera') run.stats.calderaNights++;
+    if (run.day > this.meta.bestNight) { this.meta.bestNight = run.day; this.meta.save(); }
+    this.checkCodex(false);
+    if (run.day >= NIGHTS) return this.endRun(true);
+    this.phase = 'dawn';
+    this.r.setNight(false);
+    this.r.setTelegraph([]);
+    sfx.dawn();
+    // fountains repair their surroundings
+    for (const f of [...run.board.blocks()].filter(b => b.b.mat === 'fountain')) {
+      for (const { x, y, b } of run.board.blocks()) if (Math.max(Math.abs(x - f.x), Math.abs(y - f.y)) <= 2) b.hp = b.maxHp;
+      run.coreHp = Math.min(run.coreMax, run.coreHp + 1);
+      this.r.ring(world(f.x, f.y, 0.1), 2.5, MATS.fountain.color, 0.8);
+    }
+    this.r.tintBlocks(run.board);
+    // income
+    const st = run.board.stats();
+    const income: [string, number][] = [['Morning pay', 3 + this.meta.rank('tithe')]];
+    // diminishing returns so a sea of gardens isn't an infinite money printer
+    const gCount = this.has('deep_roots') ? st.gardens : st.groundGardens;
+    const gardens = Math.floor(2.5 * Math.sqrt(gCount) * this.biome.gardenMult);
+    if (gardens) income.push([this.has('deep_roots') ? 'Gardens (Deep Roots)' : 'Gardens on the ground', gardens]);
+    if (this.has('cartographer')) income.push(['Cartographer', Math.floor(st.footprint / 6)]);
+    if (this.has('arches')) income.push(['Vaulted Arches', Math.min(6, Math.floor(st.hollows / 2))]);
+    // interest: savings grow a little
+    const interest = Math.min(INTEREST_CAP, Math.floor(run.gold / 10));
+    if (interest) income.push(['Interest on savings', interest]);
+    const done = CONTRACTS[run.contract];
+    if (done.gold) income.push([`Contract: ${done.name}`, done.gold]);
+    run.income = income.filter(i => i[1] > 0);
+    run.gold += run.income.reduce((s, i) => s + i[1], 0);
+    // offers
+    const pool = this.meta.matPool();
+    // rare offers come pre-gilded (+50% HP)
+    run.draft = Array.from({ length: 3 + this.meta.rank('draughtsman') }, () => {
+      const p = randomPiece(pool);
+      if (Math.random() < 0.15) { p.gilded = true; p.name = `Gilded ${p.name}`; }
+      return p;
+    });
+    // unique blocks: guaranteed once per act (dawns 2, 6, 10), otherwise a rare surprise
+    const owned = new Set(run.bag.flatMap(p => p.blocks.map(b => b.mat)));
+    const fresh = UNIQUES.filter(u => !owned.has(u));
+    if (fresh.length && (run.day % 4 === 2 || Math.random() < 0.15)) run.draft[run.draft.length - 1] = uniquePiece(fresh[Math.floor(Math.random() * fresh.length)]);
+    run.draftPick = -1;
+    run.treasure = (run.day % 3 === 0 && run.heat < 5) || CONTRACTS[run.contract].relic ? this.relicChoices(2) : [];
+    run.treasurePick = -1;
+    run.shop = this.relicChoices(3, run.treasure);
+    run.shopSold = run.shop.map(() => false);
+    run.market = [randomPiece(pool), randomPiece(pool)];
+    run.marketSold = [false, false];
+    run.day++;
+    run.contract = 'standard';
+    // a third of mornings bring a small choice (never on a travel day)
+    run.event = actOf(run.day) === run.act && Math.random() < 0.35 ? EVENTS[Math.floor(Math.random() * EVENTS.length)] : null;
+    run.eventDone = '';
+    // the last night is always the boss; otherwise offer two contracts besides a normal night
+    run.offers = run.day >= NIGHTS ? [] : shuffle(['calm', 'bounty', 'skyward', 'siege'] as ContractId[]).slice(0, 2);
+    run.wave = makeWave(run.day, run.board.stats());
+    if (this.has('storm_caller') && !run.wave.guardian) run.wave.weather = 'storm';
+    this.renderHud();
+    this.showDawn();
+  }
+
+  private endRun(won: boolean) {
+    const run = this.run!;
+    this.phase = 'end';
+    this.night?.dispose();
+    this.night = null;
+    $('bossbar').classList.add('hidden');
+    const st = run.board.stats();
+    run.stats.won = won;
+    run.stats.finalFootprint = st.footprint;
+    run.stats.finalMats = st.mats;
+    this.meta.runs++;
+    if (won) this.meta.wins++;
+    const earned = this.meta.evaluate(run.stats, true);
+    run.platesEarned += earned.length;
+    // seal payout
+    const held = won ? NIGHTS : run.day - 1;
+    const payout: [string, number][] = [['Nights survived', held * SEALS.night]];
+    const hard = (held >= 4 ? 1 : 0) + (held >= 8 ? 1 : 0) + (won ? 1 : 0);
+    if (hard) payout.push(['Elite & boss nights', hard * SEALS.hardNight]);
+    if (won) payout.push(['Victory', SEALS.win]);
+    if (run.platesEarned) payout.push([`Challenges done (${run.platesEarned})`, run.platesEarned * SEALS.plate]);
+    if (run.heat) payout.push([`Heat ${run.heat} bonus`, Math.round(payout.reduce((s, p) => s + p[1], 0) * 0.2 * run.heat)]);
+    if (won) this.meta.heatWon = Math.max(this.meta.heatWon, run.heat);
+    const runSeals = payout.reduce((s, p) => s + p[1], 0);
+    // plate seals were already credited when the plates were certified
+    this.meta.seals += runSeals - run.platesEarned * SEALS.plate;
+    this.meta.save();
+    if (won) sfx.dawn(); else sfx.lose();
+    if (earned.length) setTimeout(() => sfx.unlock(), 600);
+    this.r.setNight(!won);
+    const s = run.stats;
+    const row = (k: string, v: string | number) => `<tr><td>${k}</td><td class="n">${v}</td></tr>`;
+    const open = CODEX.filter(c => !this.meta.has(c.id)).slice(0, 3);
+    const affordable = UPGRADES.some(u => {
+      const r = this.meta.rank(u.id);
+      return r < u.costs.length && (!u.locked || this.meta.has(u.locked)) && u.costs[r] <= this.meta.seals;
+    });
+    this.overlay(sheet({
+      kicker: '',
+      title: won ? 'You won!' : 'The core broke',
+      note: won ? `You survived all ${NIGHTS} nights.` : `You made it to night ${run.day} of ${NIGHTS}.`,
+      headRight: `<div class="verdict">${won ? 'Victory' : 'Defeat'}</div>`,
+      body: `<div class="cols"><div>
+          ${sec(1, 'Your run')}
+          <table class="schedule">
+            ${row('Enemies defeated', s.kills)}
+            ${row('Crushed by falling blocks', s.fallKills)}
+            ${row('Tallest tower', s.maxTallest)}
+            ${row('Area built', s.finalFootprint)}
+          </table>
+          ${earned.length
+            ? `${sec(2, 'Challenges completed!')}<div class="codex">${earned.map(c => this.codexPlate(c, true)).join('')}</div>`
+            : `${sec(2, 'Try next')}<div class="codex">${open.map(c => this.codexPlate(c, false)).join('')}</div>`}
+        </div>
+        <aside class="side">
+          ${sec('✠', 'Seals earned')}
+          <div class="ledger">
+            ${payout.map(([k, v]) => ledgerLine(k, `+${v} ✠`)).join('')}
+            ${ledgerLine('You have', `${this.meta.seals} ✠`, 'total')}
+          </div>
+          ${affordable ? `<p class="note" style="margin-top:8px">You can buy a workshop upgrade!</p>` : ''}
+        </aside></div>`,
+      foot: `<div style="display:flex; gap:6px">${tab('Main menu', 'title')}${tab('Workshop', 'atelier', { red: affordable })}</div>${stamp('Play again', 'again')}`,
+    }), true, {
+      again: () => this.showFounders(),
+      title: () => this.showTitle(),
+      atelier: () => this.showAtelier(() => this.showTitle()),
+    });
+  }
+
+  private checkCodex(end: boolean) {
+    const run = this.run;
+    if (!run) return;
+    for (const c of this.meta.evaluate(run.stats, end)) {
+      run.platesEarned++;
+      this.toast(`Challenge done: ${c.name}! +${SEALS.plate} ✠. ${c.reward}`, true);
+      sfx.unlock();
+    }
+  }
+
+  private trackStats() {
+    const run = this.run!;
+    const st = run.board.stats();
+    run.stats.maxTallest = Math.max(run.stats.maxTallest, st.tallest);
+    run.stats.maxHollows = Math.max(run.stats.maxHollows, st.hollows);
+    run.stats.maxUniques = Math.max(run.stats.maxUniques, [...run.board.blocks()].filter(b => MATS[b.b.mat].unique).length);
+  }
+
+  // ======================= relics =======================
+
+  private relicChoices(n: number, exclude: RelicId[] = []): RelicId[] {
+    const owned = this.run?.relics ?? [];
+    const pool = this.meta.relicPool().map(r => r.id).filter(id => !owned.includes(id) && !exclude.includes(id));
+    return shuffle(pool).slice(0, n);
+  }
+
+  private price(base: number) {
+    const f = (this.has('thrift') ? 0.7 : 1) * (1 - 0.1 * this.meta.rank('haggling'));
+    return Math.ceil(base * f);
+  }
+  /** Relics get pricier the more you own. */
+  private relicPrice(id: RelicId) { return this.price(relicDef(id).price + 3 * (this.run?.relics.length ?? 0)); }
+
+  private addRelic(id: RelicId) {
+    const run = this.run!;
+    run.relics.push(id);
+    if (id === 'reinforced') { run.coreMax += 5; run.coreHp = run.coreMax; }
+    if (id === 'bulwark' || id === 'mortar' || id === 'tapestry') this.rehp();
+    sfx.unlock();
+  }
+
+  private hpMult = (mat: MatId, z: number) =>
+    (z === 0 ? this.biome.groundHp : 1) * (mat === 'stone' ? (this.has('bulwark') ? 2 : 1) * (1 + 0.15 * this.meta.rank('masonry')) : 1) * (this.has('mortar') && z > 0 ? 1.5 : 1) * (this.has('tapestry') && z === 0 ? 1.5 : 1);
+
+  /** Re-apply HP multipliers to existing blocks after gaining an HP relic. */
+  private rehp() {
+    for (const { z, b } of this.run!.board.blocks()) {
+      const max = Math.round(MATS[b.mat].hp * this.hpMult(b.mat, z) * (b.gilded ? GILD_HP : 1));
+      b.hp = (b.hp / b.maxHp) * max;
+      b.maxHp = max;
+    }
+  }
+
+  // ======================= dawn =======================
+
+  private showDawn() {
+    const run = this.run!;
+    const acts: Record<string, () => void> = {};
+    run.draft.forEach((p, i) => (acts[`d${i}`] = () => {
+      if (run.draftPick !== -1) return;
+      run.bag.push(p); run.draftPick = i; sfx.place(); this.showDawn();
+    }));
+    acts.dskip = () => { if (run.draftPick !== -1) return; run.draftPick = -2; run.gold += 2; sfx.coin(); this.showDawn(); };
+    run.treasure.forEach((id, i) => (acts[`t${i}`] = () => {
+      if (run.treasurePick !== -1) return;
+      run.treasurePick = i; this.addRelic(id); this.showDawn();
+    }));
+    run.shop.forEach((id, i) => (acts[`s${i}`] = () => {
+      const pr = this.relicPrice(id);
+      if (run.gold < pr || run.shopSold[i]) return;
+      run.gold -= pr; run.shopSold[i] = true; this.addRelic(id); this.showDawn();
+    }));
+    const pieceCost = this.price(5);
+    run.market.forEach((p, i) => (acts[`m${i}`] = () => {
+      if (run.gold < pieceCost || run.marketSold[i]) return;
+      run.gold -= pieceCost; run.marketSold[i] = true; run.bag.push(p); sfx.coin(); this.showDawn();
+    }));
+    const repairCost = this.price(5), removeCost = this.price(4), rerollCost = this.price(2), patchCost = this.price(4);
+    const damaged = [...run.board.blocks()].filter(b => b.b.hp < b.b.maxHp).length;
+    acts.patch = () => {
+      if (run.gold < patchCost || !damaged) return;
+      run.gold -= patchCost;
+      for (const { b } of run.board.blocks()) b.hp = b.maxHp;
+      this.r.tintBlocks(run.board);
+      sfx.coin();
+      this.showDawn();
+    };
+    const pulseCost = this.price(8 + 4 * run.coreLevel);
+    acts.pulse = () => { if (run.gold < pulseCost || run.coreLevel >= 3) return; run.gold -= pulseCost; run.coreLevel++; sfx.unlock(); this.showDawn(); };
+    acts.repair = () => { if (run.gold < repairCost || run.coreHp >= run.coreMax) return; run.gold -= repairCost; run.coreHp = Math.min(run.coreMax, run.coreHp + 4); sfx.coin(); this.showDawn(); };
+    acts.remove = () => { if (run.gold < removeCost || run.bag.length <= 4) return; this.showBag('remove'); };
+    acts.reroll = () => { if (run.gold < rerollCost) return; run.gold -= rerollCost; run.shop = this.relicChoices(3, run.treasure); run.shopSold = run.shop.map(() => false); sfx.click(); this.showDawn(); };
+    acts.bag = () => this.showBag('view');
+    acts.ev_no = () => { run.eventDone = 'You walked on.'; sfx.click(); this.showDawn(); };
+    acts.ev_yes = () => {
+      if (!run.event || run.eventDone) return;
+      if (run.event === 'merchant') {
+        const owned = new Set(run.bag.flatMap(p => p.blocks.map(b => b.mat)));
+        const fresh = UNIQUES.filter(u => !owned.has(u));
+        if (run.gold < 6 || !fresh.length) return;
+        run.gold -= 6;
+        const p = uniquePiece(fresh[Math.floor(Math.random() * fresh.length)]);
+        run.bag.push(p);
+        run.eventDone = `You bought the ${p.name}. It is in your bag.`;
+      } else if (run.event === 'shrine') {
+        const [id] = this.relicChoices(1);
+        if (run.coreHp <= 3 || !id) return;
+        run.coreHp -= 3;
+        this.addRelic(id);
+        run.eventDone = `The shrine gave you ${relicDef(id).name}: ${relicDef(id).desc}`;
+      } else if (run.event === 'gambler') {
+        if (run.gold < 5) return;
+        run.gold -= 5;
+        const win = Math.random() < 0.5;
+        if (win) run.gold += 12;
+        run.eventDone = win ? 'You won 12 gold!' : 'You lost the bet.';
+      } else if (run.event === 'quarry') {
+        run.bag.push(make('Pillar', 'rock'));
+        run.eventDone = 'A Rock Pillar joined your bag.';
+      }
+      sfx.coin();
+      this.showDawn();
+    };
+    const forgeCost = this.price(FORGE_COST);
+    acts.forge = () => { if (run.gold < forgeCost) return; this.showBag('forge'); };
+    for (const id of ['standard', ...run.offers] as ContractId[]) acts[`c_${id}`] = () => {
+      if (run.contract === id) return;
+      run.contract = id;
+      const weather = run.wave.weather;
+      run.wave = makeWave(run.day, run.board.stats(), CONTRACTS[id]);
+      run.wave.weather = weather;
+      sfx.click();
+      this.renderThreat();
+      this.showDawn();
+    };
+    acts.go = () => { sfx.click(); if (actOf(run.day) !== run.act) this.showJourney(); else this.startDay(); };
+
+    const night = run.day - 1;
+    const picked = run.draftPick;
+    const travelling = actOf(run.day) !== run.act;
+    const draft = run.draft.map((p, i) => plate(p, {
+      act: `d${i}`, taken: picked === i ? 'Got it' : undefined, faded: picked !== -1 && picked !== i,
+      desc: MATS[p.blocks[0].mat].unique ? MATS[p.blocks[0].mat].desc : undefined,
+    })).join('');
+    const waive = picked === -1
+      ? `<div class="plate skip" data-act="dskip"><div class="blank"><span class="price"><i></i>+2</span></div><div class="nm">Skip</div><p class="note" style="margin:6px 0 0; font-size:12px">Take 2 gold instead.</p></div>`
+      : '';
+    const treasure = run.treasure.map((id, i) => detail(id, {
+      act: `t${i}`, taken: run.treasurePick === i ? 'Got it' : undefined, faded: run.treasurePick !== -1 && run.treasurePick !== i,
+    })).join('');
+    const shop = run.shop.map((id, i) => {
+      const pr = this.relicPrice(id);
+      return detail(id, { act: `s${i}`, price: pr, taken: run.shopSold[i] ? 'Bought' : undefined, poor: !run.shopSold[i] && run.gold < pr });
+    }).join('');
+    const market = run.market.map((p, i) => plate(p, {
+      act: `m${i}`, cost: pieceCost,
+      taken: run.marketSold[i] ? 'Bought' : undefined, poor: !run.marketSold[i] && run.gold < pieceCost,
+    })).join('');
+    const order = (k: string, sub: string, cost: number, act: string, ok: boolean) =>
+      `<div class="order"><span class="k">${k}<small>${sub}</small></span><span class="lead"></span>${tab(`Buy · ${cost} g`, act, { disabled: !ok })}</div>`;
+
+    this.overlay(sheet({
+      kicker: `Night ${night} survived · ${NIGHTS - night} to go`,
+      title: 'Morning shop',
+      headRight: `<div class="bigstat"><span class="label">Core</span><b>${Math.ceil(run.coreHp)}/${run.coreMax}</b></div><div class="bigstat gold"><span class="label">Gold</span><b>${run.gold}</b></div>`,
+      body: `${travelling ? `<div class="warn"><b>Moving day!</b> After this shop your island flies to <b>${BIOMES[run.route[actOf(run.day)]].name}</b>. Blocks on the outer edge break off, and towers taller than ${JOURNEY_MAX_H} lose their tops.</div>` : ''}
+        ${run.event ? `<div class="event"><span class="ic">${EVENT_TEXT[run.event].icon}</span><div><b>${EVENT_TEXT[run.event].title}</b><p>${run.eventDone || EVENT_TEXT[run.event].text}</p></div>${run.eventDone ? '' : `<div class="row">${tab('No thanks', 'ev_no')}${tab(EVENT_TEXT[run.event].yes, 'ev_yes', { red: true })}</div>`}</div>` : ''}
+        <div class="cols"><div>
+          ${sec(1, 'Pick a free piece', picked === -1 ? '' : '✓ done')}
+          <div class="grid-row">${draft}${waive}</div>
+          ${run.treasure.length ? `${sec(2, 'Pick a free relic', run.treasurePick === -1 ? '' : '✓ done')}<div class="grid-row">${treasure}</div>` : ''}
+          ${run.offers.length ? `${sec(run.treasure.length ? 3 : 2, 'Choose tonight', 'more risk, more reward')}
+          <div class="contracts">${(['standard', ...run.offers] as ContractId[]).map(id => {
+            const c = CONTRACTS[id];
+            return `<button class="contract ${run.contract === id ? 'on' : ''}" data-act="c_${id}"><span class="ic">${c.icon}</span><span><b>${c.name}</b><small>${c.desc}</small></span></button>`;
+          }).join('')}</div>` : ''}
+          ${sec((run.treasure.length ? 3 : 2) + (run.offers.length ? 1 : 0), 'Shop', 'relics give special powers')}
+          <div class="grid-row">${shop}${market}</div>
+        </div>
+        <aside class="side">
+          ${sec('+', 'Gold earned')}
+          <div class="ledger">
+            ${run.income.map(([k, v]) => ledgerLine(k, `+${v}`)).join('')}
+            ${ledgerLine('Gold', `${run.gold}`, 'total')}
+          </div>
+          ${sec('⚒', 'Extras')}
+          ${order('Repair core', `+4 HP`, repairCost, 'repair', run.gold >= repairCost && run.coreHp < run.coreMax)}
+          ${order('Patch walls', damaged ? `fix ${damaged} damaged block${damaged > 1 ? 's' : ''}` : 'nothing damaged', patchCost, 'patch', run.gold >= patchCost && damaged > 0)}
+          ${run.coreLevel < 3 ? order(`Core pulse level ${run.coreLevel + 1}`, 'hits harder and further', pulseCost, 'pulse', run.gold >= pulseCost) : ''}
+          ${order('Remove a piece', 'from your bag', removeCost, 'remove', run.gold >= removeCost && run.bag.length > 4)}
+          ${order('Forge a piece', 'gild or transmute', forgeCost, 'forge', run.gold >= forgeCost)}
+          ${order('New relics', 'refresh the shop', rerollCost, 'reroll', run.gold >= rerollCost)}
+          <div style="margin-top:10px">${tab(`See your bag (${run.bag.length})`, 'bag')}</div>
+        </aside></div>`,
+      foot: `<span class="label">${picked === -1 ? 'Don’t forget your free piece!' : ''}</span>${stamp(travelling ? `Fly to ${BIOMES[run.route[actOf(run.day)]].name}` : `Start day ${run.day}`, 'go')}`,
+    }), true, acts);
+    flushDrawings($('overlay'));
+    this.renderTop();
+  }
+
+  private showBag(mode: 'view' | 'remove' | 'forge') {
+    const run = this.run!;
+    const back = () => (this.phase === 'dawn' ? this.showDawn() : this.overlay(''));
+    const acts: Record<string, () => void> = { back };
+    run.bag.forEach((p, i) => (acts[`b${i}`] = () => {
+      if (mode === 'forge') return this.showForge(p);
+      if (mode !== 'remove') return;
+      run.gold -= this.price(4);
+      run.bag.splice(i, 1);
+      run.draw = run.draw.filter(d => d !== p);
+      sfx.crumble();
+      this.toast(`${p.name} removed from your bag.`);
+      this.showDawn();
+    }));
+    const pickable = (p: Piece) => mode === 'remove' || (mode === 'forge' && !p.gilded && !p.blocks.some(b => MATS[b.mat].unique));
+    this.overlay(sheet({
+      kicker: '',
+      title: mode === 'remove' ? 'Remove a piece' : mode === 'forge' ? 'Forge a piece' : 'Your bag',
+      note: mode === 'remove' ? `Click a piece to remove it for good (${this.price(4)} gold).`
+        : mode === 'forge' ? `Pick a piece to improve (${this.price(FORGE_COST)} gold). Unique blocks and gilded pieces can't be forged again.`
+        : `You draw ${run.handSize} pieces each day. Used pieces go back into the bag.`,
+      headRight: `<div class="bigstat"><span class="label">Pieces</span><b>${run.bag.length}</b></div>`,
+      body: `<div class="grid-row" style="margin-top:16px">${run.bag.map((p, i) => plate(p, { act: pickable(p) ? `b${i}` : undefined, faded: mode === 'forge' && !pickable(p) })).join('')}</div>`,
+      foot: `${tab('Back', 'back')}`,
+    }), true, acts);
+    flushDrawings($('overlay'));
+  }
+
+  /** Two ways to improve one piece: gild it (+50% HP) or transmute its stone into a turret material. */
+  private showForge(p: Piece) {
+    const run = this.run!;
+    const cost = this.price(FORGE_COST);
+    const turrets = this.meta.matPool().filter(m => MATS[m].turret);
+    const into = turrets[Math.floor(Math.random() * turrets.length)];
+    const hasStone = p.blocks.some(b => b.mat === 'stone');
+    const transmuted: Piece = hasStone
+      ? { ...p, blocks: p.blocks.map(b => (b.mat === 'stone' ? { ...b, mat: into } : b)) }
+      : { ...p, blocks: [...p.blocks, { ...p.blocks.reduce((a, b) => (b.z > a.z ? b : a)), z: Math.max(...p.blocks.map(b => b.z)) + 1, mat: 'stone' as MatId }] };
+    const gilded: Piece = { ...p, gilded: true };
+    const apply = (np: Piece, name: string) => {
+      if (run.gold < cost) return;
+      run.gold -= cost;
+      Object.assign(p, np, { name });
+      sfx.unlock();
+      this.toast(`Forged: ${name}.`);
+      this.showDawn();
+    };
+    this.overlay(sheet({
+      kicker: 'Forge',
+      title: p.name,
+      note: `Choose one. Costs ${cost} gold.`,
+      body: `<div class="grid-row" style="margin-top:16px">
+        ${plate(gilded, { act: 'gild', desc: 'Gild: every block of this piece gets +50% HP for good.' })}
+        ${plate(transmuted, { act: 'trans', desc: hasStone ? `Transmute: its stone turns into ${MATS[into].name}.` : 'Extend: it grows one stone block taller.' })}
+      </div>`,
+      foot: tab('Back', 'back'),
+    }), true, {
+      back: () => this.showBag('forge'),
+      gild: () => apply(gilded, `Gilded ${p.name}`),
+      trans: () => apply(transmuted, hasStone ? p.name.replace(/Stone/g, MATS[into].name) : `Tall ${p.name}`),
+    });
+    flushDrawings($('overlay'));
+  }
+
+  // ======================= HUD =======================
+
+  private renderHud() {
+    this.renderTop();
+    this.renderThreat();
+    this.renderRelics();
+    this.renderHand();
+    this.renderActions();
+    this.setHint();
+  }
+
+  private renderTop() {
+    const run = this.run;
+    if (!run) return;
+    const st = run.board.stats();
+    const phase = this.phase === 'night' ? 'Night' : this.phase === 'dawn' ? 'Dawn' : 'Day';
+    const low = run.coreHp <= run.coreMax * 0.34;
+    const ticks = Array.from({ length: run.coreMax }, (_, i) => `<i class="${i < Math.ceil(run.coreHp) ? '' : 'off'}"></i>`).join('');
+    $('topbar').innerHTML = `
+      <div class="cell phase"><span class="label">${this.biome.name} · ${run.day}/${NIGHTS}</span><span class="v">${phase}</span></div>
+      <div class="cell ${low ? 'low' : ''}" data-tip="<b>Core HP</b><br>If it reaches 0, you lose."><span class="label">Core HP</span><span class="v">${Math.ceil(run.coreHp)}<small>/${run.coreMax}</small></span><div class="hpbar">${ticks}</div></div>
+      <div class="cell" data-tip="<b>Gold</b><br>Earned every morning, more with gardens on the ground."><span class="label">Gold</span><span class="v gold">${run.gold}</span></div>
+      <div class="cell stat" data-tip="<b>Tallest tower</b><br>Height makes turrets shoot further, but attracts sappers."><span class="label">Tallest</span><span class="v">${st.tallest}</span></div>
+      <div class="cell stat" data-tip="<b>Area</b><br>Ground you have built on. Width earns gold, but attracts brutes."><span class="label">Area</span><span class="v">${st.footprint}</span></div>`;
+  }
+
+  private renderThreat() {
+    const run = this.run!;
+    const counts = new Map<EnemyId, number>();
+    for (const s of run.wave.spawns) counts.set(s.type, (counts.get(s.type) ?? 0) + 1);
+    const el = $('threat');
+    el.classList.toggle('hidden', this.phase === 'dawn');
+    el.innerHTML = `
+      <div class="hd"><span class="t">${this.phase === 'night' ? 'Attack!' : 'Tonight'}</span><span>${run.wave.guardian ? '<span class="tag">Boss</span>' : ''}</span></div>
+      <div class="survey">
+        ${compass(run.wave.sides)}
+        <div class="roster">
+          ${[...counts.entries()].map(([t, n]) => `<div class="r" data-tip="<b>${ENEMIES[t].name}</b><br>${ENEMIES[t].desc}">${enemyGlyph(t)}<span>${ENEMIES[t].name}</span><span class="n">×${n}</span></div>`).join('')}
+        </div>
+      </div>
+      ${run.wave.weather ? `<div class="weather" data-tip="<b>${WEATHER[run.wave.weather].name}</b><br>${WEATHER[run.wave.weather].desc}"><span class="ic">${WEATHER[run.wave.weather].icon}</span><span><b>${WEATHER[run.wave.weather].name}</b> ${WEATHER[run.wave.weather].desc}</span></div>` : ''}
+      <div class="remain" id="remaining"></div>`;
+  }
+
+  private updateNightHud() {
+    const n = this.night;
+    if (!n) return;
+    const el = document.getElementById('remaining');
+    if (el) el.innerHTML = `<span class="label">Enemies left</span><b>${n.remaining}</b>`;
+    const boss = n.bossRef;
+    const bar = $('bossbar');
+    if (boss && !boss.dead) {
+      bar.classList.remove('hidden');
+      const t = bar.querySelector('.t')!;
+      if (t.textContent !== boss.def.name) t.textContent = boss.def.name;
+      bar.querySelector('.label')!.textContent = boss.hidden ? 'underground!' : 'Boss';
+      (bar.querySelector('.fill') as HTMLElement).style.width = `${(boss.hp / boss.maxHp) * 100}%`;
+    } else bar.classList.add('hidden');
+  }
+
+  private renderRelics() {
+    const run = this.run!;
+    $('relics').innerHTML = run.relics.length ? `<span class="label">Relics</span>${run.relics.map(id => callout(id)).join('')}` : '';
+  }
+
+  private renderHand() {
+    const run = this.run!;
+    const el = $('hand');
+    el.classList.toggle('hidden', this.phase !== 'day');
+    el.innerHTML = run.hand.map((p, i) => plate({ ...p, blocks: rotatePiece(p.blocks, i === this.sel ? this.rot : 0) }, {
+      no: `${i + 1}`, taken: i === run.keptIdx ? 'Kept' : undefined, extraCls: `${i === this.sel ? 'sel' : ''} ${run.used[i] ? 'used' : ''}`, attrs: `data-card="${i}"`,
+    })).join('');
+    flushDrawings(el);
+    el.querySelectorAll<HTMLElement>('[data-card]').forEach(c => (c.onclick = () => this.selectCard(+c.dataset.card!)));
+  }
+
+  private renderActions() {
+    const el = $('actions');
+    const run = this.run!;
+    if (this.phase === 'day') {
+      const left = run.used.filter(u => !u).length;
+      el.innerHTML = `${stamp('Start night', 'night', left ? `${left} piece${left > 1 ? 's' : ''} left` : 'ready!')}
+        <div class="tabs">${tab('Rotate', 'rotate', { disabled: this.sel < 0, tip: 'Rotate the piece (R)' })}${run.redraws > 0 ? tab(`Redraw ${run.redraws}`, 'redraw', { tip: 'Swap your unused pieces for new ones' }) : ''}${tab('Keep', 'keep', { disabled: this.sel < 0 || !!run.keep, tip: 'Save the selected piece for tomorrow (K)' })}${tab(`Demolish ${run.demolishes}`, 'demolish', { disabled: !run.demolishes, red: this.demolishing, tip: 'Remove one of your blocks (X)' })}${tab(`Bag ${run.bag.length}`, 'bag')}</div>`;
+    } else if (this.phase === 'night') {
+      el.innerHTML = `<span class="left topples${run.topples ? '' : ' spent'}">⤵ Topples left: <b>${run.topples}</b></span>
+        <div class="tabs">${tab(`Drop stone · ${DROP_COST}g`, 'drop', { disabled: run.gold < DROP_COST, red: this.dropping, tip: 'Drop a stone block on the enemies (D)' })}${run.topples ? tab('Turn ↻', 'turn', { disabled: !this.ghostKey, tip: 'Change which way the tower falls (R)' }) : ''}${tab(`Aim: ${AIMS[this.aim]}`, 'aim', { tip: 'What turrets shoot first: closest to the core, the strongest enemy, or fliers (A)' })}${tab(`Speed ${this.speed}×`, 'speed', { tip: 'Night speed (F)' })}</div>`;
+    } else el.innerHTML = '';
+    el.querySelectorAll<HTMLElement>('[data-act]').forEach(b => (b.onclick = () => {
+      const a = b.dataset.act;
+      if (a === 'night') this.beginNight();
+      if (a === 'bag') this.showBag('view');
+      if (a === 'rotate') this.rotate();
+      if (a === 'speed') this.toggleSpeed();
+      if (a === 'redraw') this.redraw();
+      if (a === 'turn') this.turnTopple();
+      if (a === 'demolish') this.toggleDemolish();
+      if (a === 'keep') this.keepPiece();
+      if (a === 'drop') this.toggleDrop();
+      if (a === 'aim') { const order: Aim[] = ['first', 'strong', 'air']; this.aim = order[(order.indexOf(this.aim) + 1) % 3]; sfx.click(); this.renderActions(); }
+    }));
+  }
+
+  private redraw() {
+    const run = this.run!;
+    if (this.phase !== 'day' || run.redraws <= 0) return;
+    const keep = run.hand.filter((_, i) => run.used[i]);
+    const want = run.hand.length - keep.length;
+    if (!want) return;
+    run.redraws--;
+    const fresh: Piece[] = [];
+    for (let i = 0; i < want; i++) {
+      if (!run.draw.length) run.draw = shuffle(run.bag.filter(p => !run.hand.includes(p) && !fresh.includes(p)));
+      const p = run.draw.pop();
+      if (p) fresh.push(p);
+    }
+    run.hand = [...keep, ...fresh];
+    run.used = run.hand.map((_, i) => i < keep.length);
+    this.sel = -1;
+    sfx.rotate();
+    this.renderHud();
+    const next = run.used.findIndex(u => !u);
+    if (next >= 0) this.selectCard(next);
+  }
+
+  private toggleSpeed() {
+    this.speed = this.speed === 1 ? 2 : this.speed === 2 ? 3 : 1;
+    sfx.click();
+    this.renderActions();
+  }
+
+  private setHint(extra?: string) {
+    let h = '';
+    if (this.phase === 'day') {
+      const touch = matchMedia('(pointer: coarse)').matches;
+      h = this.sel >= 0
+        ? (touch ? 'Tap to preview, tap again to place · ⟳ to rotate' : 'Click to place · R / right-click to rotate · Esc to cancel')
+        : (touch ? 'Pick a piece from your hand' : 'Pick a piece, or hover a column to inspect it · Space to begin the night');
+      if (this.demolishing) h = `${touch ? 'Tap a block twice' : 'Click a block'} to remove it. Blocks above it fall down.`;
+    } else if (this.phase === 'night') {
+      const touch = matchMedia('(pointer: coarse)').matches;
+      h = this.run && this.run.topples > 0
+        ? `${touch ? 'Tap' : 'Click'} a tower to aim a topple at the enemies`
+        : touch ? 'Drag to look around' : 'Drag to look around · F for speed';
+      if (this.dropping) h = `Pick a spot next to your fortress to drop a stone (${DROP_COST} gold). It crushes whatever is under it.`;
+    }
+    if (extra) h = extra;
+    if (h !== this.hint) { this.hint = h; $('hint').textContent = h; }
+    // keep the hint just above whatever the bottom bar currently holds
+    $('hint').style.bottom = `${$('bottom').offsetHeight + 24}px`;
+  }
+
+  // ======================= placement =======================
+
+  private selectCard(i: number) {
+    const run = this.run;
+    if (!run || this.phase !== 'day' || i >= run.hand.length || run.used[i]) return;
+    sfx.click();
+    this.sel = this.sel === i ? -1 : i;
+    this.demolishing = false;
+    this.rot = 0;
+    this.renderHand();
+    this.renderActions();
+    this.updateGhost();
+    this.setHint();
+  }
+
+  private currentPlacement(): Placement | null {
+    const run = this.run;
+    if (!run || this.sel < 0 || !this.lastPointer) return null;
+    const cell = this.r.pick(this.lastPointer.x, this.lastPointer.y);
+    if (!cell) return null;
+    const blocks = rotatePiece(run.hand[this.sel].blocks, this.rot);
+    const pv = pivotOf(blocks);
+    return run.board.evaluate(blocks, cell.x - pv.x, cell.y - pv.y);
+  }
+
+  private updateGhost() {
+    const run = this.run;
+    if (!run || this.phase !== 'day') return;
+    if (this.sel < 0) {
+      this.r.clearGhost();
+      this.inspect();
+      return;
+    }
+    const p = this.currentPlacement();
+    if (!p || !p.cells.length) { this.r.clearGhost(); this.r.setRanges([]); this.setHint(); return; }
+    this.r.setGhost(p.cells, p.ok);
+    const rings = p.cells.filter(c => MATS[c.mat].turret).map(c => ({ x: c.x, y: c.y, r: turretRange(c.mat, c.z, this.has, rangeBonus(this.mods(), c.mat)), color: MATS[c.mat].color }));
+    this.r.setRanges(p.ok ? rings : []);
+    this.setHint(p.ok ? undefined : `✕ ${p.reason}`);
+  }
+
+  private inspect() {
+    const run = this.run!;
+    if (!this.lastPointer) return;
+    const cell = this.r.pick(this.lastPointer.x, this.lastPointer.y);
+    if (!cell || !run.board.height(cell.x, cell.y)) { this.r.setRanges([]); this.setHint(); return; }
+    const col = run.board.col(cell.x, cell.y);
+    const rings: { x: number; y: number; r: number; color: number }[] = [];
+    let note = '';
+    col.forEach((b, z) => {
+      if (!b || !MATS[b.mat].turret || !run.board.exposed.has(b.id)) return;
+      rings.push({ x: cell.x, y: cell.y, r: turretRange(b.mat, z, this.has, rangeBonus(this.mods(), b.mat)), color: MATS[b.mat].color });
+      const n = stackBelow(run.board, cell.x, cell.y, z);
+      const parts: string[] = [];
+      if (n) parts.push(`${MATS[b.mat].name} tower: ${n + 1} stacked · ${b.mat === 'ward' ? `+${(0.3 * n).toFixed(1)} range` : `+${Math.round(STACK_BONUS * n * 100)}% damage`}`);
+      const touching = new Set<MatId>();
+      for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+        const nb = run.board.blockAt(cell.x + dx, cell.y + dy, z + dz);
+        if (nb) touching.add(nb.mat);
+      }
+      const rx = reactionOf(b.mat, touching);
+      if (rx) parts.push(`✦ ${REACTIONS[rx].name}: ${REACTIONS[rx].desc}`);
+      if (parts.length) note = parts.join(' · ');
+    });
+    this.r.setRanges(rings);
+    this.setHint(note || undefined);
+  }
+
+  private tryPlace() {
+    const run = this.run;
+    if (!run || this.phase !== 'day' || this.sel < 0) return;
+    const p = this.currentPlacement();
+    if (!p || !p.ok) { sfx.invalid(); return; }
+    const piece = run.hand[this.sel];
+    const made = run.board.place(p, (m, z) => this.hpMult(m, z) * (piece.gilded ? GILD_HP : 1));
+    if (piece.gilded) for (const b of made) b.gilded = true;
+    for (const c of p.cells) run.stats.placedMats.add(c.mat);
+    if (this.has('masons_guild') && p.cells.every(c => c.z > 0)) { run.gold++; this.r.floatText(world(p.cells[0].x, p.cells[0].y, p.cells[0].z + 1.5), '+1', '#f7c948'); sfx.coin(); }
+    if (this.has('frontier') && p.cells.every(c => c.z === 0)) { run.gold++; this.r.floatText(world(p.cells[0].x, p.cells[0].y, 1.5), '+1', '#f7c948'); sfx.coin(); }
+    this.r.syncBoard(run.board);
+    sfx.place();
+    this.r.shakeCam(0.08);
+    run.used[this.sel] = true;
+    this.trackStats();
+    this.checkCodex(false);
+    const next = run.used.findIndex(u => !u);
+    this.sel = -1;
+    this.r.clearGhost();
+    this.r.setRanges([]);
+    this.renderHud();
+    if (next >= 0) this.selectCard(next);
+  }
+
+  private rotate() {
+    if (this.phase !== 'day' || this.sel < 0) return;
+    this.rot = (this.rot + 1) % 4;
+    sfx.rotate();
+    this.renderHand();
+    this.updateGhost();
+  }
+
+  // ======================= input =======================
+
+  private bindInput() {
+    const cvs = this.r.renderer.domElement;
+    cvs.addEventListener('contextmenu', e => e.preventDefault());
+    cvs.addEventListener('pointerdown', e => { this.downAt = { x: e.clientX, y: e.clientY, b: e.button }; });
+    cvs.addEventListener('pointermove', e => {
+      this.lastPointer = { x: e.clientX, y: e.clientY };
+      if (this.phase === 'day') { if (this.demolishing) this.updateDemolishGhost(); else this.updateGhost(); }
+      if (this.phase === 'night') { if (this.dropping) { const p = this.dropPlacement(); if (p?.cells.length) this.r.setGhost(p.cells, p.ok); else this.r.clearGhost(); } else this.updateToppleGhost(); }
+    });
+    cvs.addEventListener('pointerup', e => {
+      const d = this.downAt;
+      this.downAt = null;
+      if (!d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) return;
+      this.lastPointer = { x: e.clientX, y: e.clientY };
+      if (this.phase === 'night') {
+        if (this.dropping) { if (d.b === 0) this.tryDrop(e.pointerType !== 'mouse'); else this.toggleDrop(); return; }
+        if (d.b === 2) return this.turnTopple();
+        if (d.b !== 0) return;
+        if (e.pointerType !== 'mouse') {
+          const cell = this.r.pickBlock(e.clientX, e.clientY);
+          const key = cell ? `${cell.x},${cell.y}` : '';
+          if (key !== this.touchPreview) { this.touchPreview = key; this.updateToppleGhost(); return; }
+        }
+        this.touchPreview = '';
+        return this.tryTopple();
+      }
+      if (this.phase === 'day' && this.demolishing) { if (d.b === 0) this.tryDemolish(e.pointerType !== 'mouse'); else this.toggleDemolish(); return; }
+      if (d.b === 2) return this.rotate();
+      if (d.b !== 0) return;
+      this.updateGhost();
+      if (e.pointerType !== 'mouse') {
+        const cell = this.r.pick(e.clientX, e.clientY);
+        const key = cell ? `${cell.x},${cell.y},${this.rot},${this.sel}` : '';
+        if (key !== this.touchPreview) { this.touchPreview = key; this.setHint(this.sel >= 0 ? 'Tap again to place' : undefined); return; }
+      }
+      this.touchPreview = '';
+      this.tryPlace();
+    });
+    window.addEventListener('keydown', e => {
+      if (e.repeat) return;
+      const k = e.key.toLowerCase();
+      if (k === 'm') { setMuted(!isMuted()); this.toast(isMuted() ? 'Sound off.' : 'Sound on.'); }
+      if (k === 'q') this.r.rotateView(-1);
+      if (k === 'e') this.r.rotateView(1);
+      if (this.phase === 'day' && !$('overlay').innerHTML) {
+        if (k === 'r') this.rotate();
+        if (k === 'x') this.toggleDemolish();
+        if (k === 'k') this.keepPiece();
+        if (k === 'escape') { this.demolishing = false; this.sel = -1; this.renderHand(); this.updateGhost(); this.setHint(); }
+        if (k >= '1' && k <= '5') this.selectCard(+k - 1);
+        if (k === ' ' || k === 'enter') { e.preventDefault(); this.beginNight(); }
+      } else if (this.phase === 'day' && k === 'escape') this.overlay('');
+      if (this.phase === 'night' && k === 'f') this.toggleSpeed();
+      if (this.phase === 'night' && k === 'r') this.turnTopple();
+      if (this.phase === 'night' && k === 'd') this.toggleDrop();
+      if (this.phase === 'night' && k === 'a') $('actions').querySelector<HTMLElement>('[data-act=aim]')?.click();
+    });
+  }
+
+  private bindTooltips() {
+    const tip = $('tooltip');
+    document.addEventListener('mouseover', e => {
+      const t = (e.target as HTMLElement).closest?.('[data-tip]') as HTMLElement | null;
+      if (!t) { tip.classList.add('hidden'); return; }
+      tip.innerHTML = t.dataset.tip!;
+      tip.classList.remove('hidden');
+    });
+    document.addEventListener('mousemove', e => {
+      if (tip.classList.contains('hidden')) return;
+      const w = tip.offsetWidth, h = tip.offsetHeight;
+      let x = e.clientX + 16, y = e.clientY - h - 12;
+      if (x + w > window.innerWidth - 8) x = e.clientX - w - 16;
+      if (y < 8) y = e.clientY + 20;
+      tip.style.left = `${x}px`;
+      tip.style.top = `${y}px`;
+    });
+  }
+
+  // ======================= helpers =======================
+
+  /** Phones and tablets play fullscreen, like an installed app. */
+  private fullscreen() {
+    if (!matchMedia('(pointer: coarse)').matches || document.fullscreenElement) return;
+    document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => {});
+  }
+
+  /** In-game yes/no dialog. */
+  private ask(title: string, text: string, yes: string, onYes: () => void) {
+    sfx.click();
+    const el = $('modal');
+    el.innerHTML = `<div class="paper box"><h2>${title}</h2><p>${text}</p><div class="row">${tab('Cancel', 'no')}${tab(yes, 'yes', { red: true })}</div></div>`;
+    el.onclick = e => {
+      const a = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+      if (!a && e.target !== el) return;
+      el.innerHTML = '';
+      if (a === 'yes') onYes();
+    };
+  }
+
+  private overlay(html: string, dim = false, acts: Record<string, () => void> = {}) {
+    const el = $('overlay');
+    if (html) document.querySelectorAll('.banner').forEach(b => b.remove());
+    el.innerHTML = html;
+    el.classList.toggle('dim', dim && !!html);
+    document.body.classList.toggle('sheet-open', dim && !!html);
+    $('tooltip').classList.add('hidden');
+    el.onclick = e => {
+      const t = (e.target as HTMLElement).closest('[data-act]') as HTMLElement | null;
+      if (t && acts[t.dataset.act!]) acts[t.dataset.act!]();
+    };
+  }
+
+  private toast(msg: string, unlock = false) {
+    const t = document.createElement('div');
+    t.className = 'paper toast' + (unlock ? ' unlock' : '');
+    t.innerHTML = `<span class="label">${unlock ? '★' : '▸'}</span>`;
+    t.append(msg);
+    $('toasts').appendChild(t);
+    setTimeout(() => t.remove(), unlock ? 4500 : 2200);
+  }
+
+  private banner(kicker: string, title: string, sub = '') {
+    document.querySelectorAll('.banner').forEach(b => b.remove());
+    const b = document.createElement('div');
+    b.className = 'banner';
+    b.innerHTML = `<div class="k">${kicker}</div><div class="t">${title}</div>${sub ? `<div class="dimline">${sub}</div>` : ''}`;
+    document.body.appendChild(b);
+    setTimeout(() => b.remove(), 2300);
+  }
+}
