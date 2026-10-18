@@ -125,3 +125,73 @@ A bot played full runs against a frozen build in performance mode (`?debug&perf`
 - Wide is still the strongest style with upgrades (7 of 10 wins), but only about 1 night ahead of the others.
 - Nights 9 and 10 are still where most runs end. That's the start of the last act, so it's partly by design.
 - With 10 runs per cell, a single result moves by about ±0.5 night, so small differences are noise.
+
+## Round 2: a faster bench, a new tower, the heat ladder and a new map
+
+### A balance bench that's about 1,000× faster
+
+The old bot took about 2 minutes per run. The new bench (`npm run bench -- <experiment.json>`, see `tools/bench/README.md`) plays about 8 runs a second on 8 workers, so 1,320 runs take about 2.5 minutes.
+
+| Change | Effect |
+|---|---|
+| Nights stepped synchronously at 1/30 s, game timers on a virtual clock, no frames | No real waiting at all |
+| `?bench` headless mode: no sound, HUD, toasts or layout reads | 4× less work per run |
+| Chrome without GPU compositing or GPU 2D canvas | Workers scale; before, they queued behind the GPU process with the CPU idle |
+| Every random roll goes through `src/rng.ts`, which the bench seeds; previews use `peek()` | The same seed replays the same run exactly, on any worker |
+| Balance knobs gathered in `src/tune.ts` and overridable per variant | A tweak needs no rebuild |
+| Paired comparison against the first variant on the same seeds | 0.2-night differences show up with 120 pairs |
+| Damage tracked by source | You can see which towers pull their weight |
+
+### New tower: Arc
+
+Arc fires chain lightning that hits one enemy, then jumps up to 3 times to the nearest unhit enemy. Each jump is weaker, and it can hit fliers. Its range is short and barely grows with height, so it suits low walls and wide builds, while crystals stay the tall, long-range answer to fliers. It also has two combos:
+
+- **Static (Arc + ward):** each zap stuns ground enemies briefly.
+- **Grounded (Arc + stone):** 2 more jumps.
+
+Arc is in the starting pool and in the Settler and Sprawler bags, and the forge can temper it. It deals about 12% of all damage, against crystal 37%, ember 29% and topples 16%.
+
+### Balance now (40 runs per cell)
+
+| Upgrades | Balanced | Tall | Wide | Wins |
+|---|---|---|---|---|
+| None | 9.2 | 9.9 | 9.8 | 15% |
+| Mid | 10.5 | 10.7 | 10.7 | 35% |
+
+The three styles now end within 0.7 nights of each other, against about 1.5 before. The changes that did it:
+
+- Crystals 3 or more blocks up hit fliers ×2 (was ×1.6), which lifted tall from 7% to 33% wins with mid upgrades.
+- Big footprints draw a few more fliers.
+- Gardens pay slightly less.
+
+### Heat ladder (mid upgrades, 120 runs per level)
+
+| Heat | New rule | Avg night | Step | Wins |
+|---|---|---|---|---|
+| 0 | none | 10.64 | | 35% |
+| 1 | Enemies have +15% HP | 10.43 | −0.21 | 25% |
+| 2 | 3 less gold and 3 less core HP at the start | 10.07 | −0.36 | 23% |
+| 3 | Elites from night 2, three times as often | 9.59 | −0.48 | 10% |
+| 4 | Act guardians have double HP | 9.56 | −0.03 | 10% |
+| 5 | Treasure spots become events | 9.00 | −0.56 | 3% |
+| 6 | Shops cost 25% more | 8.94 | −0.06 | 5% |
+| 7 | Enemies move 15% faster | 8.22 | −0.72 | 3% |
+| 8 | 5% more enemies every night | 7.87 | −0.35 | 1% |
+| 9 | Fliers from night 1, 50% more often | 7.55 | −0.32 | 0% |
+| 10 | The final boss gets back up once | 7.55 | 0 | 0% |
+
+The first measurement showed that heats 3, 4 and 7 to 9 barely bit; "one topple fewer" even helped the bot, because its toppling knocks over its own towers. Those levels were replaced or strengthened, and each level now costs about 0.2 to 0.7 nights. Heats 4, 6 and 10 hardly show for the bot, because it rarely reaches the guardian or final boss in good shape and barely uses shops. They still matter to human players.
+
+The bot stops winning from about heat 5. A player who plans should get much further, but whether heat 10 is winnable by a good player has to be checked by hand.
+
+### The map
+
+The act map is now a surveyor's chart on a desk (`src/chart.ts`):
+
+- an inked parchment sheet with deckled edges, a lamp-lit desk with a flickering vignette, biome doodles, a compass and a title cartouche;
+- red wax seals with danger notches and Roman night numbers for nights, and line-drawn stops;
+- dotted trails ahead and the walked trail in red ink;
+- a pawn that hops along while the new trail inks itself in;
+- fog over the rows far ahead;
+- the sheet unrolls when an act begins, and the view follows the pawn;
+- the detail panel is a pinned note card with the same art, and the legend is a collapsible map key.
