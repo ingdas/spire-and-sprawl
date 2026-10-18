@@ -746,3 +746,10 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 #inspect small .cx { font-family: var(--mono); font-size: 12px; text-transform: none; color: var(--red); }
 #inspect { --ox: 10px; --oy: 0px; }
 @media (pointer: coarse) { #inspect { display: none !important; } }
+
+/* coach notes for a first run */
+#coach { position: absolute; top: 380px; left: 14px; width: 300px; padding: 12px 14px; border-left: 5px solid var(--red); z-index: 7; --oy: -20px; }
+#coach > * { position: relative; z-index: 1; }
+#coach b { font-family: var(--display); font-weight: 800; font-size: 22px; text-transform: uppercase; }
+#coach p { margin: 4px 0 10px; font-size: 13.5px; line-height: 1.45; }
+@media (max-width: 760px) { #coach { top: 200px; left: 16px; right: 16px; width: auto; } }

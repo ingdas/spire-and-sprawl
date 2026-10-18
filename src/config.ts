@@ -9,8 +9,8 @@ export const START_GOLD = 4;
 export const HAND_SIZE = 4;
 
 export type MatId = 'stone' | 'garden' | 'crystal' | 'ember' | 'ward' | 'beacon' | 'rock' | UniqueId;
-export type UniqueId = 'anvil' | 'bell' | 'keg' | 'omen' | 'fountain' | 'mirror';
-export const UNIQUES: UniqueId[] = ['anvil', 'bell', 'keg', 'omen', 'fountain', 'mirror'];
+export type UniqueId = 'anvil' | 'bell' | 'keg' | 'omen' | 'fountain' | 'mirror' | 'ballista' | 'spikes' | 'vane' | 'rootheart' | 'lodestone' | 'hourglass';
+export const UNIQUES: UniqueId[] = ['anvil', 'bell', 'keg', 'omen', 'fountain', 'mirror', 'ballista', 'spikes', 'vane', 'rootheart', 'lodestone', 'hourglass'];
 
 export interface MatDef {
   id: MatId;
@@ -78,6 +78,30 @@ export const MATS: Record<MatId, MatDef> = {
   mirror: {
     id: 'mirror', name: 'Mirror', color: 0xe7edf3, hp: 5, turret: false, unique: true,
     desc: 'Crystal blocks touching it (sides, above or below) fire 60% faster.',
+  },
+  ballista: {
+    id: 'ballista', name: 'Ballista', color: 0xa0703c, hp: 8, turret: false, unique: true,
+    desc: 'A giant crossbow: every 2.5 seconds it fires a bolt that hits hard and pierces shields. Very long range, longer when placed high.',
+  },
+  spikes: {
+    id: 'spikes', name: 'Spike Block', color: 0x6d6a78, hp: 22, turret: false, unique: true,
+    desc: 'A tough wall covered in spikes. Enemies standing next to it take damage every second.',
+  },
+  vane: {
+    id: 'vane', name: 'Wind Vane', color: 0xd8e6f0, hp: 6, turret: false, unique: true,
+    desc: 'Every 6 seconds a gust blows walking enemies within 3 cells one step back, away from the core.',
+  },
+  rootheart: {
+    id: 'rootheart', name: 'Root Heart', color: 0x4f9a3c, hp: 10, turret: false, unique: true,
+    desc: 'Gardens within 2 cells count double for morning gold.',
+  },
+  lodestone: {
+    id: 'lodestone', name: 'Lodestone', color: 0x8a3346, hp: 9, turret: false, unique: true,
+    desc: 'Pulls at flying enemies: fliers within 3 cells are slowed by half and take double damage.',
+  },
+  hourglass: {
+    id: 'hourglass', name: 'Hourglass', color: 0xf0d79a, hp: 6, turret: false, unique: true,
+    desc: 'For the first 15 seconds of every night, enemies within 3 cells move at half speed.',
   },
 };
 

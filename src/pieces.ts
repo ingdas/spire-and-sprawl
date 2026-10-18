@@ -1,3 +1,4 @@
+import type { RelicId } from './meta';
 import { MATS, MatId } from './config';
 
 export interface PBlock { x: number; y: number; z: number; mat: MatId }
@@ -112,11 +113,12 @@ export function pivotOf(blocks: PBlock[]): { x: number; y: number } {
 
 export type FounderId = 'settler' | 'spirewright' | 'sprawler' | 'quarryman' | 'pyromancer';
 
-export const FOUNDERS: Record<FounderId, { name: string; desc: string; bag: () => Piece[] }> = {
+export const FOUNDERS: Record<FounderId, { name: string; desc: string; relic?: RelicId; bag: () => Piece[] }> = {
   settler: {
     name: 'Settler',
-    desc: 'A balanced bag of flat plots, gardens and a few turrets.',
+    desc: 'A balanced bag of flat plots, gardens and a few turrets, plus a Fountain that patches your walls.',
     bag: () => [
+      uniquePiece('fountain'),
       make('Pebble', 'stone'), make('Slab', 'stone'), make('Tee', 'stone'),
       make('Line', 'garden'), make('Corner', 'garden'),
       make('Slab', 'crystal'), make('Pebble', 'crystal'),
@@ -125,8 +127,10 @@ export const FOUNDERS: Record<FounderId, { name: string; desc: string; bag: () =
   },
   spirewright: {
     name: 'Spirewright',
-    desc: 'Pillars and crowned columns. Built to go up.',
+    desc: 'Pillars and crowned columns, a Ballista to put on top, and the Spyglass relic. Built to go up.',
+    relic: 'spyglass',
     bag: () => [
+      uniquePiece('ballista'),
       make('Column', 'stone'), make('Pillar', 'stone'), make('Column', 'stone', 'crystal'),
       make('Pillar', 'crystal'), make('Square', 'stone'), make('Slab', 'garden'),
       make('Pillar', 'stone', 'ember'), make('Step', 'stone'), make('Pebble', 'garden'),
@@ -134,8 +138,10 @@ export const FOUNDERS: Record<FounderId, { name: string; desc: string; bag: () =
   },
   sprawler: {
     name: 'Sprawler',
-    desc: 'Wide gardens and walls. Built to spread out.',
+    desc: 'Wide gardens and walls, a Root Heart for double garden gold, and the Cartographer relic. Built to spread out.',
+    relic: 'cartographer',
     bag: () => [
+      uniquePiece('rootheart'),
       make('Square', 'garden'), make('Line', 'garden'), make('Zig', 'garden'),
       make('Wall', 'stone'), make('Hook', 'stone'), make('Corner', 'crystal'),
       make('Slab', 'ember'), make('Pebble', 'ember'), make('Tee', 'stone'),
@@ -143,7 +149,8 @@ export const FOUNDERS: Record<FounderId, { name: string; desc: string; bag: () =
   },
   quarryman: {
     name: 'Quarryman',
-    desc: 'Heavy stone and rock, plus an Anvil. Built to topple onto enemies.',
+    desc: 'Heavy stone and rock, an Anvil, and the Bulwark relic. Built to topple onto enemies.',
+    relic: 'bulwark',
     bag: () => [
       uniquePiece('anvil'), make('Pillar', 'rock'), make('Column', 'stone'), make('Obelisk', 'stone'),
       make('Square', 'stone'), make('Line', 'garden'), make('Pebble', 'crystal'), make('Pillar', 'stone', 'ember'),
@@ -152,7 +159,8 @@ export const FOUNDERS: Record<FounderId, { name: string; desc: string; bag: () =
   },
   pyromancer: {
     name: 'Pyromancer',
-    desc: 'Embers everywhere and a Powder Keg. Built to burn.',
+    desc: 'Embers everywhere, a Powder Keg, and the Firestorm relic. Built to burn.',
+    relic: 'firestorm',
     bag: () => [
       uniquePiece('keg'), make('Corner', 'ember'), make('Slab', 'ember'), make('Pillar', 'stone', 'ember'),
       make('Square', 'garden'), make('Line', 'stone'), make('Tee', 'stone'), make('Pebble', 'crystal'),

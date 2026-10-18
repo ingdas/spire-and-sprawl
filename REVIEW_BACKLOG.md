@@ -29,7 +29,7 @@ The rest is polish, and there's a lot of it. It's listed below.
 | ✅ 5 | Turret blocks don't look like turrets. Only a small gem or flame sits on top. | Make the emblem scale with the stacking bonus, and show the stack count as stripes on the side of the block. A 3-crystal stack should look clearly more powerful than 1. | P2 | S |
 | ✅ 6 | Beacon and ward effects are invisible. You trust the tooltip. | Draw beacon links: a faint line from the beacon to each turret it boosts. Ward slow fields should shimmer on the ground at night. | P2 | S |
 | ✅ 7 | Gilded pieces look like normal ones once they're placed. | Gilded blocks get gold trim edges on the board, not just in the card. | P3 | S |
-| 8 | Unique blocks are rare, and only 6 exist. | Raise it to about 12 unique blocks and make a few common enough to build a run around: a *Siege Ballista* (long range, slow), a *Spike Pit* (floor trap), a *Wind Vane* (turns sandstorms into a weapon), a *Root Heart* (gardens spread). | P2 | L |
+| ✅ 8 | Unique blocks are rare, and only 6 exist. | Raise it to about 12 unique blocks and make a few common enough to build a run around: a *Siege Ballista* (long range, slow), a *Spike Pit* (floor trap), a *Wind Vane* (turns sandstorms into a weapon), a *Root Heart* (gardens spread). | P2 | L |
 | ✅ 9 | Materials have no upgrade path inside a run. | Forge option: "Temper": all crystal blocks in the bag get +10% damage. That makes material choice a build commitment. | P3 | M |
 | ✅ 10 | Overhanging blocks look like they're floating (the crystal pair over the core on night 4 read as a bug). | Draw supports: a timber strut or arch under overhangs, so hollows read as bridges and make Vaulted Arches legible. | P2 | M |
 | ✅ 11 | Material colours are the only way to tell blocks apart, which fails for colour-blind players. | With item 1, every material gets a distinct face pattern. Add a colour-blind palette option. | P2 | S |
@@ -111,14 +111,14 @@ The rest is polish, and there's a lot of it. It's listed below.
 
 | # | Problem (evidence) | Change | Pri | Size |
 |---|---|---|---|---|
-| 60 | How to play is a wall of text, and its numbering jumps around (1, 2, 3, 4, ✦, ◎, ★, ✈, 5, 6, …). | Replace it with a guided first run: day 1 teaches placing, night 1 teaches walls, day 2 teaches height, night 2 teaches topple. Keep How to play as a picture glossary. | P1 | L |
+| ✅ 60 | How to play is a wall of text, and its numbering jumps around (1, 2, 3, 4, ✦, ◎, ★, ✈, 5, 6, …). | Replace it with a guided first run: day 1 teaches placing, night 1 teaches walls, day 2 teaches height, night 2 teaches topple. Keep How to play as a picture glossary. | P1 | L |
 | ✅ 61 | The title screen covers its own 3D demo, and "0 ✠ to spend" uses a glyph nobody knows yet. | A smaller title card on the side so the island shows. Label it "Seals ✠" until the player has earned some. | P3 | S |
 | ✅ 62 | The defeat screen doesn't say why you lost. | Add "What hurt you": core damage by enemy type, plus the night it happened, and a snapshot of your final fortress. | P1 | S |
 | ✅ 63 | Runs can't be resumed: closing the tab loses the run. | Autosave at every morning (run state to localStorage), and a "Continue" option on the title. | P1 | M |
 | ✅ 64 | No settings: volume, music, camera speed, reduced motion and the default night speed can't be changed. | A settings sheet on the title screen and the pause menu. | P2 | M |
 | ✅ 65 | There's no music, only sound effects. | Day and night music tracks that crossfade at dusk, plus a boss layer. | P2 | M |
 | ✅ 66 | Journeys are just a sheet of text, even though the island flies to a new land. | A 3-second cutscene: the camera pulls back, the island lifts and clouds rush past, then it lands in the new biome's colours. | P2 | M |
-| 67 | Only 5 founders, and the first is forced on a new player. | Make founder differences bigger: each has a starting relic and a signature unique block. | P3 | M |
+| ✅ 67 | Only 5 founders, and the first is forced on a new player. | Make founder differences bigger: each has a starting relic and a signature unique block. | P3 | M |
 | ✅ 68 | Portrait phone framing cuts off the island's sides, and the top bar drops Tallest and Area, which matter for tall vs wide. | Zoom the portrait camera out to fit, and show Tallest and Area as small chips under the top bar. | P1 | S |
 | ✅ 69 | On phones the hand and actions take a third of the screen, and the night buttons wrap to two rows. | A single-row night bar with icon buttons, and a collapsible hand that can be swiped down. | P2 | M |
 

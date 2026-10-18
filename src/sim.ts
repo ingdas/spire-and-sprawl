@@ -133,6 +133,8 @@ interface Enemy {
   stun: number;
   /** underground: cannot be targeted or hurt */
   hidden: boolean;
+  /** pulled by a lodestone: takes double damage while > 0 */
+  marked: number;
   /** seconds of slow left from frost beams / smoke */
   chill: number;
   affix: Affix | null;
@@ -141,6 +143,8 @@ interface Enemy {
 interface Turret { x: number; y: number; z: number; b: Block; mat: MatId; range: number; dmgMult: number; cdMult: number; cd: number; hitsAir: boolean; stack: number; react: Reaction | null }
 
 /** Material reactions between touching blocks (sides, above or below). */
+const UNIQUE_SPOTS: MatId[] = ['ballista', 'spikes', 'vane', 'lodestone', 'hourglass'];
+
 export type Reaction = 'frost' | 'smoke' | 'sparks' | 'bloom' | 'wildfire' | 'shrapnel' | 'bramble' | 'deepchill' | 'glint';
 /** Combos: a turret touching (side, above or below) a certain block gets a twist. First match wins. */
 export const REACTIONS: Record<Reaction, { name: string; desc: string; turret: MatId; with: MatId; icon: string }> = {
@@ -226,6 +230,8 @@ export class Night {
   private omens: { x: number; y: number }[] = [];
   /** lingering slow fields left by toppled ward blocks */
   private zones: { x: number; y: number; r: number; t: number }[] = [];
+  /** unique blocks that act on their own each night */
+  private specials: { x: number; y: number; z: number; mat: MatId; cd: number }[] = [];
   /** burning ground from wildfire shells */
   private fires: { x: number; y: number; r: number; t: number; dps: number }[] = [];
   private ventCd = 6;
@@ -249,7 +255,7 @@ export class Night {
     const e: Enemy = {
       type: s.type, def, hp, maxHp: hp, pos: new THREE.Vector2(out.x, out.y), alt: 0,
       cur: null, next: edge, mode: s.type === 'flier' || s.type === 'bomber' || s.type === 'leviathan' ? 'fly' : s.type === 'climber' ? 'climb' : 'walk', sapTarget: null,
-      slow: 0, flash: 0, view: this.r.makeEnemy(s.type), dead: false, t: Math.random() * 10, shed: 3, chewing: null, stun: 0, hidden: false, chill: 0, affix: null,
+      slow: 0, flash: 0, view: this.r.makeEnemy(s.type), dead: false, t: Math.random() * 10, shed: 3, chewing: null, stun: 0, hidden: false, chill: 0, affix: null, marked: 0,
     };
     if (s.type === 'sapper') this.retargetSapper(e);
     if (s.type === 'wyrm') e.hidden = true;
@@ -270,7 +276,7 @@ export class Night {
     const hp = def.hp * this.wave.hpScale;
     this.enemies.push({
       type, def, hp, maxHp: hp, pos: from.pos.clone(), alt: 0, cur: from.cur, next: from.next, mode: 'walk',
-      sapTarget: null, slow: 0, flash: 0, view: this.r.makeEnemy(type), dead: false, t: 0, shed: 0, chewing: null, stun: 0, hidden: false, chill: 0, affix: null,
+      sapTarget: null, slow: 0, flash: 0, view: this.r.makeEnemy(type), dead: false, t: 0, shed: 0, chewing: null, stun: 0, hidden: false, chill: 0, affix: null, marked: 0,
     });
   }
 
@@ -290,9 +296,11 @@ export class Night {
     this.turrets = [];
     this.bells = [];
     this.omens = [];
+    this.specials = [];
     for (const { x, y, z, b: blk } of b.blocks()) {
       if (blk.mat === 'bell') this.bells.push({ x, y, z });
       if (blk.mat === 'omen') this.omens.push({ x, y });
+      if (UNIQUE_SPOTS.includes(blk.mat)) this.specials.push({ x, y, z, mat: blk.mat, cd: blk.mat === 'ballista' ? 1 : 6 });
       if (!MATS[blk.mat].turret || !b.exposed.has(blk.id)) continue;
       const footing = isFoundation(b.blockAt(x, y, z - 1)?.mat) ? FOUNDATION_RANGE : 0;
       const range = Math.max(1.2, turretRange(blk.mat, z, has, rangeBonus(this.hooks.mods, blk.mat)) + footing - (this.wave.weather === 'fog' ? 1 : 0));
@@ -327,6 +335,7 @@ export class Night {
     if (e.dead || e.hidden) return;
     if (this.omens.some(o => Math.hypot(e.pos.x - o.x, e.pos.y - o.y) <= 2.2)) dmg *= 1.5;
     if (e.type === 'bulwark' && !pierce) dmg *= 0.5;
+    if (e.marked > 0) dmg *= 2;
     e.hp -= dmg;
     e.flash = 0.12;
     if (e.hp <= 0) {
@@ -479,7 +488,7 @@ export class Night {
     if (this.turretVersion !== this.board.version) this.rebuildTurrets();
     const has = this.hooks.has;
 
-    for (const e of this.enemies) e.slow = 0;
+    for (const e of this.enemies) { e.slow = 0; e.marked = Math.max(0, e.marked - dt); }
     // wards
     this.wardPulse -= dt;
     const pulse = this.wardPulse <= 0;
@@ -506,6 +515,7 @@ export class Night {
       for (const e of this.enemies) if (e.mode !== 'fly' && Math.hypot(e.pos.x - f.x, e.pos.y - f.y) <= f.r) this.damage(e, f.dps * dt);
     }
     this.fires = this.fires.filter(f => f.t > 0);
+    this.uniques(dt);
     // chilled by frost beams or smoke shells
     for (const e of this.enemies) if (e.chill > 0) { e.chill -= dt; e.slow = Math.max(e.slow, 0.4); }
     // bells stun everything on the ground in earshot
@@ -883,6 +893,49 @@ export class Night {
   private hitCore(e: Enemy) {
     e.dead = true;
     this.hooks.coreDamage(e.def.coreDmg, e.type, this.enemyWorld(e));
+  }
+
+  /** The new unique blocks: ballista, spikes, vane, lodestone and hourglass. */
+  private uniques(dt: number) {
+    for (const u of this.specials) {
+      const near = (r: number, ground = true) => this.enemies.filter(e => !e.dead && !e.hidden && (!ground || e.mode !== 'fly') && Math.hypot(e.pos.x - u.x, e.pos.y - u.y) <= r);
+      if (u.mat === 'spikes') { for (const e of near(1.1)) this.damage(e, 1.4 * dt); continue; }
+      if (u.mat === 'lodestone') { for (const e of this.enemies) if (!e.dead && e.mode === 'fly' && Math.hypot(e.pos.x - u.x, e.pos.y - u.y) <= 3) { e.slow = Math.max(e.slow, 0.5); e.marked = 0.2; } continue; }
+      if (u.mat === 'hourglass') { if (this.t < 15) for (const e of near(3, false)) e.slow = Math.max(e.slow, 0.5); continue; }
+      if ((u.cd -= dt) > 0) continue;
+      if (u.mat === 'ballista') {
+        const tgt = this.nearestTarget(u.x, u.y, 5.5 + 0.3 * u.z, true);
+        if (!tgt) { u.cd = 0.2; continue; }
+        u.cd = 2.5;
+        this.r.shot(world(u.x, u.y, u.z + 0.8), this.enemyWorld(tgt), 0xffd08a);
+        this.r.kickBlock(this.board.blockAt(u.x, u.y, u.z)?.id ?? -1, 4);
+        this.damage(tgt, 6, false, true);
+        sfx.shell();
+      } else if (u.mat === 'vane') {
+        u.cd = 6;
+        const hit = near(3).filter(e => e.mode === 'walk');
+        if (!hit.length) continue;
+        this.r.ring(world(u.x, u.y, 0.1), 3, 0xd8e6f0, 0.5);
+        for (const e of hit) this.pushBack(e);
+      }
+    }
+  }
+
+  /** Blow a walking enemy one open cell further from the core. */
+  private pushBack(e: Enemy) {
+    const cx = Math.round(e.pos.x), cy = Math.round(e.pos.y);
+    let best: { x: number; y: number } | null = null, bd = this.board.distAt(cx, cy);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const x = cx + dx, y = cy + dy;
+      if (!this.board.inBounds(x, y) || this.board.height(x, y) || this.board.isCore(x, y)) continue;
+      const d = this.board.distAt(x, y);
+      if (d > bd) { bd = d; best = { x, y }; }
+    }
+    if (!best) { e.stun = Math.max(e.stun, 0.8); return; }
+    e.pos.set(best.x, best.y);
+    e.cur = best;
+    e.next = null;
+    e.chewing = null;
   }
 
   /** Turrets reload twice as fast for a few seconds. */

@@ -118,6 +118,8 @@ export class Game {
   private dropping = false;
   private aim: Aim = 'first';
   private paused = false;
+  /** coach notes already shown to this player */
+  private coached = new Set<string>((() => { try { return JSON.parse(localStorage.getItem('spire-coach') ?? '[]') as string[]; } catch { return []; } })());
   private flying = false;
   /** seconds of slow motion left (a boss arriving) */
   private slowmo = 0;
@@ -337,16 +339,16 @@ export class Game {
         ${item('2', 'Survive the night', 'Enemies come from the <b class="red">red</b> sides. They chew through the <b>bottom</b> block of a column to reach the core.')}
         ${item('3', 'Tall towers', 'Turrets shoot further the higher they are. Stack the same material to make it stronger: three crystals on top of each other hit harder than one. A turret standing on stone (or rock) shoots 1 cell further.')}
         ${item('4', 'Topple!', 'At night, click a tower to knock it over. Every block that lands on an enemy crushes it, and the tower becomes a wall. What it is made of matters: ember splashes fire, crystal shatters into shards, ward leaves a slow field, garden drops gold. You get one topple per night.')}
-        ${item('✦', 'Combos', `A turret touching a certain block (side, above or below) gets a twist, and a small star shows on it: ${Object.values(COMBOS).map(c => `${MATS[c.turret].name.toLowerCase()} + ${MATS[c.with].name.toLowerCase()} = <b>${c.name}</b>`).join(', ')}. Hover a tower in the day to see what it does.`)}
-        ${item('◎', 'Gold tips', 'Every 10 gold you save earns +1 at dawn (up to +3). Starting the night with pieces still in hand pays +1 gold each. At night you can drop an emergency stone for 3 gold, and at a camp on the map you can make the core pulse hit harder.')}
-        ${item('ϟ', 'Weather', 'Some nights have weather: fog shortens turret range, thunderstorms strike your tallest tower (put a crystal on top to turn it into a weapon!), and a full moon makes enemies faster but pays extra gold. Check the Tonight panel.')}
-        ${item('★', 'Unique blocks', 'Rare block stops on the map (and sometimes your morning pick) offer special blocks: the Anvil, Bell, Powder Keg, Omen Stone, Fountain or Mirror. Each one has its own rule, so build around it!')}
-        ${item('✈', 'Journeys', 'After nights 4 and 8 your island flies to a new land (Dunes, Glacier or Caldera) with new rules. On the way, blocks on the outer edge break off and very tall towers lose their tops.')}
-        ${item('5', 'Wide bases', 'Gardens on the ground earn gold every morning. Every block is a wall enemies must chew through.')}
-        ${item('6', 'Watch out', '<b class="red">Sappers</b> tunnel to your tallest tower and blow up its base. <b class="red">Brutes</b> show up more when you build wide.')}
-        ${item('7', 'The map', 'After each night you pick a free piece, then choose your path on the map. Red squares are nights (some are harder but pay more). The stops between them each do one thing: a shop, a camp to heal, a forge, treasure, a rare block or a mystery.')}
-        ${item('8', 'Seals & workshop', 'Every run earns seals ✠, even if you lose. Spend them in the workshop on permanent upgrades. Challenges give the most seals.')}
-        ${item('⌨', 'Controls', '<kbd>Click</kbd> place / topple · <kbd>R</kbd> rotate · drag to look around · <kbd>Q</kbd><kbd>E</kbd> turn the camera · <kbd>1</kbd>–<kbd>5</kbd> pick a piece · <kbd>K</kbd> keep for tomorrow · <kbd>X</kbd> demolish · <kbd>Space</kbd> start the night · <kbd>F</kbd> speed · <kbd>M</kbd> mute')}
+        ${item('5', 'Combos', `A turret touching a certain block (side, above or below) gets a twist, and a small star shows on it: ${Object.values(COMBOS).map(c => `${MATS[c.turret].name.toLowerCase()} + ${MATS[c.with].name.toLowerCase()} = <b>${c.name}</b>`).join(', ')}. Hover a tower in the day to see what it does.`)}
+        ${item('6', 'Gold tips', 'Starting the night with pieces still in hand pays +1 gold each. In the day you can buy an extra piece or an extra demolish. At night an emergency stone costs gold (more each time). Shops have a premium shelf for big savers, and the Treasury Vault relic pays interest.')}
+        ${item('7', 'Weather', 'Some nights have weather: fog shortens turret range, thunderstorms strike your tallest tower (put a crystal on top to turn it into a weapon!), and a full moon makes enemies faster but pays extra gold. Check the Tonight panel.')}
+        ${item('8', 'Unique blocks', `Rare block stops on the map (and the premium shelf in shops) offer special blocks with their own rule: ${UNIQUES.map(u => MATS[u].name).join(', ')}. Build around them!`)}
+        ${item('9', 'Journeys', 'After nights 4 and 8 your island flies to a new land (Dunes, Glacier or Caldera) with new rules. On the way, blocks on the outer edge break off and very tall towers lose their tops.')}
+        ${item('10', 'Wide bases', 'Gardens on the ground earn gold every morning. Every block is a wall enemies must chew through.')}
+        ${item('11', 'Watch out', '<b class="red">Sappers</b> tunnel to your tallest tower and blow up its base. <b class="red">Brutes</b> show up more when you build wide.')}
+        ${item('12', 'The map', 'After each night you pick a free piece, then choose your path on the map. Red squares are nights (some are harder but pay more). The stops between them each do one thing: a shop, a camp to heal, a forge, treasure, a rare block or a mystery.')}
+        ${item('13', 'Seals & workshop', 'Every run earns seals ✠, even if you lose. Spend them in the workshop on permanent upgrades. Challenges give the most seals.')}
+        ${item('14', 'Controls', '<kbd>Click</kbd> place / topple · <kbd>R</kbd> rotate · drag to look around · <kbd>Q</kbd><kbd>E</kbd> turn the camera · <kbd>1</kbd>–<kbd>5</kbd> pick a piece · <kbd>K</kbd> keep for tomorrow · <kbd>X</kbd> demolish · <kbd>Z</kbd> undo · <kbd>Space</kbd> start the night · at night: <kbd>P</kbd> pause · <kbd>G</kbd> rally · <kbd>H</kbd> shore up · <kbd>D</kbd> drop stone · <kbd>V</kbd> ranges · <kbd>A</kbd> aim · <kbd>F</kbd> speed · <kbd>M</kbd> mute')}
       </div>`,
       foot: `${tab('Back', 'back')}`,
     }), true, { back: () => this.showTitle() });
@@ -368,6 +370,8 @@ export class Game {
       route: rollRoute(), act: 0, heat: meta.heat, coreLevel: 0, vents: [], wave: makeWave(1), handSize: HAND_SIZE + (meta.has('grand_architect') ? 1 : 0),
       draft: [], draftPick: -1, treasure: [], treasurePick: -1, platesEarned: 0, redraws: 0, demolishes: 0, keep: null, keptIdx: -1, topples: 0, keystone: meta.rank('keystone') > 0, shop: [], shopSold: [], market: [], marketSold: [], income: [], contract: 'standard', event: null, eventDone: '', map: makeMap(0, { treasure: meta.heat < 5 }), hurt: {}, hurtByNight: {}, undo: [], drops: 0, rallies: 0, shoreups: 0, killsTonight: 0, buys: 0, premium: null, premiumSold: false, temper: {},
     };
+    const sig = FOUNDERS[founder].relic;
+    if (sig) { this.addRelic(sig); this.toast(`${FOUNDERS[founder].name} brings ${relicDef(sig).name}.`); }
     const gifts = (meta.has('grand_architect') ? 1 : 0) + meta.rank('cartouche');
     for (const id of this.relicChoices(gifts)) { this.addRelic(id); this.toast(`Starting relic: ${relicDef(id).name}.`); }
     this.overlay('');
@@ -531,6 +535,9 @@ export class Game {
     this.banner(`${run.day} of ${NIGHTS}`, 'Day', run.wave.guardian ? `tonight: ${ENEMIES[run.wave.guardian].name}` : 'time to build');
     this.renderHud();
     if (run.day === 1) this.selectCard(0);
+    if (run.day === 1) this.coach('build', 'Build your fortress', 'Pick a piece below and place it next to the pink core. Pieces land on whatever is under them, so you can build up or out. The arrows show where enemies will walk.');
+    if (run.day === 2) this.coach('height', 'Go up', 'Turrets (crystal and ember) shoot further when they are higher. Stack the same material for more damage, and stand turrets on stone for extra range.');
+    if (run.day === 3) this.coach('map', 'Combos', 'Some blocks boost each other when they touch, for example crystal next to ward makes frost beams. A small star appears on a turret with a combo. Hover a tower to see what it does.');
   }
 
   private drawHand() {
@@ -595,6 +602,8 @@ export class Game {
     });
     this.r.setWeather(run.wave.weather);
     this.r.setGates(run.wave.sides);
+    if (run.day === 1) this.coach('night', 'Here they come', 'Enemies come through the purple gates and chew through the bottom of your walls. Your turrets fire on their own. Press Pause any time.');
+    if (run.day === 2) this.coach('topple', 'Topple!', 'Click a tower to knock it over onto the enemies. Every block that lands on one crushes it. The Topples counter glows when it is a good moment.');
     music(run.wave.guardian ? 'boss' : 'night');
     // a boss arrives with ceremony: the camera turns to its gate and time slows for a moment
     if (run.wave.guardian) {
@@ -926,7 +935,9 @@ export class Game {
     const st = run.board.stats();
     const income: [string, number][] = [['Morning pay', 3 + this.meta.rank('tithe')]];
     // diminishing returns so a sea of gardens isn't an infinite money printer
-    const gCount = this.has('deep_roots') ? st.gardens : st.groundGardens;
+    const hearts = [...run.board.blocks()].filter(b => b.b.mat === 'rootheart');
+    const boosted = [...run.board.blocks()].filter(b => b.b.mat === 'garden' && (this.has('deep_roots') || b.z === 0) && hearts.some(h => Math.max(Math.abs(h.x - b.x), Math.abs(h.y - b.y)) <= 2)).length;
+    const gCount = (this.has('deep_roots') ? st.gardens : st.groundGardens) + boosted;
     const gardens = Math.floor(2.5 * Math.sqrt(gCount) * this.biome.gardenMult);
     if (gardens) income.push([this.has('deep_roots') ? 'Gardens (Deep Roots)' : 'Gardens on the ground', gardens]);
     if (this.has('cartographer')) income.push(['Cartographer', Math.floor(st.footprint / 6)]);
@@ -1310,7 +1321,7 @@ export class Game {
       foot: `<span class="label">${matchMedia('(pointer: coarse)').matches ? 'Tap a glowing spot, then Go' : 'Click a glowing spot to choose it'}</span>${stamp(canGo ? (fight ? `Start day ${run.day}` : `Go: ${info!.name}`) : 'Not yet', 'go', '', !canGo)}`,
       cls: 'mapsheet',
     }), true, acts);
-    if (!this.meta.runs && run.day === 2 && m.visited.length === 1) this.toast('This is the map. Pick your path to the boss: each spot does one thing.');
+    if (run.day === 2 && m.visited.length === 1) this.coach('mapintro', 'The map', 'Choose your path to the boss at the top. Red squares are nights (the dots show how hard). The circles are stops that each give you one thing: a shop, a camp, a forge…');
     // keep the spot you are choosing on screen (the map is taller than a phone)
     document.querySelector('.map .node.sel')?.scrollIntoView({ block: 'center' });
     this.renderHud();
@@ -2205,7 +2216,17 @@ export class Game {
     };
   }
 
-  /** Show or hide an element with its enter/leave animation instead of snapping. */
+  /** A one-time tip for new players, pinned under the top bar until dismissed. */
+  private coach(id: string, title: string, text: string) {
+    if (this.coached.has(id) || this.meta.runs > 0) return;
+    this.coached.add(id);
+    try { localStorage.setItem('spire-coach', JSON.stringify([...this.coached])); } catch { /* fine */ }
+    const box = $('coach');
+    box.innerHTML = `<b>${title}</b><p>${text}</p><button class="tab" data-coach="ok">Got it</button>`;
+    this.fade(box, true);
+    box.querySelector<HTMLElement>('[data-coach]')!.onclick = () => this.fade(box, false);
+  }
+
   private fade(el: HTMLElement, on: boolean) {
     const hidden = el.classList.contains('hidden'), leaving = el.classList.contains('anim-out');
     if (on) {

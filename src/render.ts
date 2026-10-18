@@ -701,6 +701,43 @@ export class Renderer {
       m.position.y = 0.72;
       m.userData.bob = true;
       g.add(m);
+    } else if (mat === 'ballista') {
+      const bow = outlined(new THREE.BoxGeometry(0.7, 0.07, 0.1), toon(0x6b4a32), 0.03);
+      bow.position.y = 0.66;
+      const bolt = outlined(new THREE.ConeGeometry(0.06, 0.5, 5).rotateX(Math.PI / 2), toon(0xe0e0e0), 0.03);
+      bolt.position.set(0, 0.7, 0.1);
+      g.add(bow, bolt);
+      g.userData.spin = 0;
+    } else if (mat === 'spikes') {
+      for (const [dx, dz] of [[-0.22, -0.22], [0.22, -0.22], [-0.22, 0.22], [0.22, 0.22], [0, 0]]) {
+        const m = outlined(new THREE.ConeGeometry(0.09, 0.3, 4), toon(0xd8d8e0), 0.03);
+        m.position.set(dx, 0.62, dz);
+        g.add(m);
+      }
+    } else if (mat === 'vane') {
+      const pole = outlined(new THREE.CylinderGeometry(0.03, 0.03, 0.4, 5), toon(0x55566a), 0.02);
+      pole.position.y = 0.68;
+      const arrow = outlined(new THREE.ConeGeometry(0.1, 0.42, 3).rotateZ(Math.PI / 2), toon(0xf2c45a), 0.03);
+      arrow.position.y = 0.86;
+      arrow.userData.spin = 1.4;
+      g.add(pole, arrow);
+    } else if (mat === 'rootheart') {
+      const m = outlined(GEO.orb, toon(0x9be07a, { emissive: 0x1e4010 }), 0.03);
+      m.position.y = 0.72;
+      m.scale.setScalar(1.4);
+      m.userData.bob = true;
+      g.add(m);
+    } else if (mat === 'lodestone') {
+      const m = outlined(new THREE.TorusGeometry(0.2, 0.07, 6, 12, Math.PI), toon(0xc8433a), 0.03);
+      m.position.y = 0.66;
+      m.userData.swing = true;
+      g.add(m);
+    } else if (mat === 'hourglass') {
+      const top = outlined(new THREE.ConeGeometry(0.17, 0.22, 6).rotateX(Math.PI), toon(0xf6e2a8), 0.03);
+      const bot = outlined(new THREE.ConeGeometry(0.17, 0.22, 6), toon(0xf6e2a8), 0.03);
+      top.position.y = 0.88; bot.position.y = 0.64;
+      g.add(top, bot);
+      g.userData.spin = 0;
     } else if (mat === 'mirror') {
       const m = outlined(GEO.mirror, toon(0xffffff, { emissive: 0x404a55 }), 0.03);
       m.position.y = 0.78;
