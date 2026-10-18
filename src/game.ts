@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { isMuted, music, setMuted, setVolumes, sfx } from './audio';
-import { Settings, loadSettings, saveSettings } from './settings';
+import { PERF, Settings, loadSettings, saveSettings } from './settings';
 import { Board, Placement } from './board';
 import { CORE, ENEMIES, applyColorBlind, EnemyId, HAND_SIZE, MATS, MatId, N, NIGHTS, START_CORE_HP, START_GOLD, UNIQUES } from './config';
 import { CODEX, CodexDef, HEATS, Meta, RelicId, RunStats, SEALS, UPGRADES, relicDef } from './meta';
@@ -102,7 +102,7 @@ export class Game {
   phase: Phase = 'title';
   run: Run | null = null;
   night: Night | null = null;
-  speed = (() => { try { return Number(localStorage.getItem('spire-speed')) || 1; } catch { return 1; } })();
+  speed = (() => { try { const v = Number(localStorage.getItem('spire-speed')) || 1; return PERF || v <= 3 ? v : 1; } catch { return 1; } })();
   sel = -1;
   rot = 0;
   private lastPointer: { x: number; y: number } | null = null;
@@ -444,12 +444,12 @@ export class Game {
     const slider = (key: 'sfx' | 'music' | 'camSpeed', label: string, min: number, max: number) => `
       <label class="setting"><span>${label}</span>
         <span class="steps">${[0, 1, 2, 3, 4].map(i => { const v = +(min + ((max - min) * i) / 4).toFixed(2); return `<button class="chip ${Math.abs(s[key] - v) < 0.01 ? 'on' : ''}" data-act="${key}_${i}">${key === 'camSpeed' ? `${v}×` : i === 0 ? 'Off' : `${i * 25}%`}</button>`; }).join('')}</span></label>`;
-    const toggle = (key: 'reduceMotion' | 'colorBlind', label: string, note: string) => `
+    const toggle = (key: 'reduceMotion' | 'colorBlind' | 'perf', label: string, note: string) => `
       <label class="setting"><span>${label}<small>${note}</small></span><span class="steps"><button class="chip ${s[key] ? '' : 'on'}" data-act="${key}_0">Off</button><button class="chip ${s[key] ? 'on' : ''}" data-act="${key}_1">On</button></span></label>`;
     const acts: Record<string, () => void> = { back };
     for (const [key, min, max] of [['sfx', 0, 1], ['music', 0, 1], ['camSpeed', 0.5, 1.5]] as const)
       for (let i = 0; i < 5; i++) acts[`${key}_${i}`] = () => { s[key] = +(min + ((max - min) * i) / 4).toFixed(2); this.commitSettings(back); };
-    for (const key of ['reduceMotion', 'colorBlind'] as const)
+    for (const key of ['reduceMotion', 'colorBlind', 'perf'] as const)
       for (const i of [0, 1]) acts[`${key}_${i}`] = () => { s[key] = !!i; this.commitSettings(back); };
     this.overlay(sheet({
       kicker: '',
@@ -460,6 +460,7 @@ export class Game {
         ${slider('camSpeed', 'Camera speed', 0.5, 1.5)}
         ${toggle('reduceMotion', 'Reduce motion', 'Fewer menu and HUD animations')}
         ${toggle('colorBlind', 'Colour-blind colours', 'Block colours that are easier to tell apart')}
+        ${toggle('perf', 'Performance mode', 'Low graphics and up to 30× night speed. Takes effect after a reload.')}
       </div>`,
       foot: tab('Back', 'back'),
     }), true, acts);
@@ -1866,7 +1867,8 @@ export class Game {
   }
 
   private toggleSpeed() {
-    this.speed = this.speed === 1 ? 2 : this.speed === 2 ? 3 : 1;
+    const steps = PERF ? [1, 3, 10, 30] : [1, 2, 3];
+    this.speed = steps[(steps.indexOf(this.speed) + 1) % steps.length] ?? 1;
     try { localStorage.setItem('spire-speed', `${this.speed}`); } catch { /* fine */ }
     sfx.click();
     this.renderActions();

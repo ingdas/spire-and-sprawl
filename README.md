@@ -11,6 +11,8 @@ npm run build    # static HTML5 export in dist/
 npm run preview  # serve the built export
 ```
 
+**Performance mode:** add `?perf` to the URL, or turn it on in Settings and reload. It switches to low resolution with no shadows or effects, and redraws about 4 times a second. The night-speed button also gets 1× / 3× / 10× / 30× steps. Use it for balancing runs (`?debug&perf` exposes `window.game` to scripts) or on weak machines. A small badge in the corner shows when it's on.
+
 `dist/` is a self-contained static site (fonts are bundled, so it works offline). Zip it and upload it to itch.io (or any static host) as an HTML5 game. Browsers block ES modules on `file://`, so open it through a web server. On phones it goes fullscreen when you press Play, and browser gestures (zoom, pull-to-refresh, text selection, long-press menus) are switched off so it plays like an app.
 
 ## The loop

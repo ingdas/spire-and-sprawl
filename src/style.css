@@ -753,3 +753,5 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 #coach b { font-family: var(--display); font-weight: 800; font-size: 22px; text-transform: uppercase; }
 #coach p { margin: 4px 0 10px; font-size: 13.5px; line-height: 1.45; }
 @media (max-width: 760px) { #coach { top: 200px; left: 16px; right: 16px; width: auto; } }
+
+#perfbadge { position: fixed; right: 10px; bottom: 10px; z-index: 50; pointer-events: none; font: 700 10px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; padding: 3px 6px; background: #25202e; color: #ffd34a; opacity: 0.8; }

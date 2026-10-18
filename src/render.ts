@@ -4,6 +4,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { Board } from './board';
 import { BiomeDef } from './biomes';
 import { CORE, ENEMIES, EnemyId, MATS, MatId, N, PALETTE } from './config';
+import { PERF } from './settings';
 /** keep in step with sim.ts TOPPLE_SWING (render can't import sim without a cycle) */
 const TOPPLE_SWING = 0.4;
 
@@ -232,6 +233,7 @@ export class Renderer {
   /** a short camera move toward a point of interest (a boss, a journey) */
   private cine: { point: THREE.Vector3; t: number; dur: number; pull: number } | null = null;
   private cineApplied = new THREE.Vector3();
+  private perfFrame = 0;
   private coreSq = 0;
   private coreSqv = 0;
   private blockRoot = new THREE.Group();
@@ -253,8 +255,8 @@ export class Renderer {
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.setPixelRatio(PERF ? 0.5 : Math.min(window.devicePixelRatio, 2));
+    this.renderer.shadowMap.enabled = !PERF;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(this.renderer.domElement);
 
@@ -332,6 +334,7 @@ export class Renderer {
 
   /** Big plume of fire from a vent. */
   eruption(x: number, y: number) {
+    if (PERF) return;
     const at = world(x, y, 0.1);
     this.ring(at, 1.6, 0xff6a2a, 0.6);
     this.debris(at.clone().add(new THREE.Vector3(0, 0.3, 0)), 0xff8a3a, 14);
@@ -341,6 +344,7 @@ export class Renderer {
 
   /** Wind streak across a tower top. */
   gust(x: number, y: number, z: number, side: number) {
+    if (PERF) return;
     const [dx, dy] = [[0, 1], [-1, 0], [0, -1], [1, 0]][side];
     for (let i = 0; i < 3; i++) {
       const from = world(x - dx * 3, y - dy * 3, z + 0.3 + i * 0.25), to = world(x + dx * 3, y + dy * 3, z + 0.3 + i * 0.25);
@@ -1009,6 +1013,7 @@ export class Renderer {
   // ---------- effects ----------
 
   beam(from: THREE.Vector3, to: THREE.Vector3, color: number) {
+    if (PERF) return;
     const m = new THREE.Mesh(GEO.beam, new THREE.MeshBasicMaterial({ color, transparent: true }));
     const d = to.clone().sub(from);
     m.position.copy(from).addScaledVector(d, 0.5);
@@ -1020,6 +1025,7 @@ export class Renderer {
 
   /** A turret shot: muzzle flash, a thick bolt, sparks where it lands. */
   shot(from: THREE.Vector3, to: THREE.Vector3, color: number) {
+    if (PERF) return;
     const m = new THREE.Mesh(GEO.bolt, new THREE.MeshBasicMaterial({ color, transparent: true }));
     const d = to.clone().sub(from);
     m.position.copy(from).addScaledVector(d, 0.5);
@@ -1036,6 +1042,7 @@ export class Renderer {
 
   /** Bright chips flying off a hit. */
   spark(pos: THREE.Vector3, color: number, n: number) {
+    if (PERF) return;
     for (let i = 0; i < n; i++) {
       const m = new THREE.Mesh(GEO.spark, new THREE.MeshBasicMaterial({ color, transparent: true }));
       m.position.copy(pos);
@@ -1047,6 +1054,7 @@ export class Renderer {
 
   /** A fading ember left behind a flying shell. */
   trail(pos: THREE.Vector3, color: number) {
+    if (PERF) return;
     const m = new THREE.Mesh(GEO.flash, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, depthWrite: false }));
     m.position.copy(pos);
     m.scale.setScalar(0.5);
@@ -1149,6 +1157,7 @@ export class Renderer {
   }
 
   lightning(from: THREE.Vector3, to: THREE.Vector3) {
+    if (PERF) return;
     const pts: THREE.Vector3[] = [];
     for (let i = 0; i <= 8; i++) {
       const p = from.clone().lerp(to, i / 8);
@@ -1168,6 +1177,7 @@ export class Renderer {
   remove(o: THREE.Object3D) { this.scene.remove(o); }
 
   ring(pos: THREE.Vector3, radius: number, color: number, dur = 0.4) {
+    if (PERF) return;
     const m = new THREE.Mesh(GEO.rangeRing, new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, side: THREE.DoubleSide }));
     m.rotation.x = -Math.PI / 2;
     m.position.copy(pos);
@@ -1181,6 +1191,7 @@ export class Renderer {
   private debrisMats = new Map<number, THREE.Material>();
 
   debris(pos: THREE.Vector3, color: number, count: number) {
+    if (PERF) return;
     let mat = this.debrisMats.get(color);
     if (!mat) { mat = toon(color); this.debrisMats.set(color, mat); }
     for (let i = 0; i < count; i++) {
@@ -1194,6 +1205,7 @@ export class Renderer {
 
   /** Soft dust clouds where something heavy lands. */
   puff(pos: THREE.Vector3, count: number) {
+    if (PERF) return;
     for (let i = 0; i < count; i++) {
       const m = new THREE.Mesh(GEO.puff, new THREE.MeshBasicMaterial({ color: 0xfff6e6, transparent: true, opacity: 0.8, depthWrite: false }));
       const a = (i / count) * Math.PI * 2 + Math.random();
@@ -1206,6 +1218,7 @@ export class Renderer {
   }
 
   floatText(pos: THREE.Vector3, text: string, color: string) {
+    if (PERF) return;
     const canvas = document.createElement('canvas');
     const font = 'bold 40px "Trebuchet MS", sans-serif';
     const measure = canvas.getContext('2d')!;
@@ -1518,6 +1531,8 @@ export class Renderer {
     this.camera.position.add(delta);
     this.cineApplied.copy(want);
     this.controls.update();
+    // performance mode: draw about four times a second
+    if (PERF && (this.perfFrame = (this.perfFrame + 1) % 15) !== 0) return;
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - realDt);
       const s = this.shake * 0.25;

@@ -4,6 +4,7 @@ import '@fontsource/rubik/latin-600';
 import '@fontsource/rubik/latin-400-italic';
 import './style.css';
 import { Game } from './game';
+import { PERF } from './settings';
 
 // Behave like an app, not a page: no context menus, selection, drag ghosts, pinch or ctrl-wheel zoom.
 for (const ev of ['contextmenu', 'selectstart', 'dragstart', 'gesturestart']) {
@@ -24,3 +25,11 @@ Promise.race([document.fonts.ready, new Promise(r => setTimeout(r, 2500))]).then
   splash.classList.add('out');
   setTimeout(() => splash.remove(), 600);
 });
+
+// performance mode shows a small badge so nobody mistakes it for the real look
+if (PERF) {
+  const b = document.createElement('div');
+  b.id = 'perfbadge';
+  b.textContent = 'Performance mode';
+  document.body.appendChild(b);
+}
