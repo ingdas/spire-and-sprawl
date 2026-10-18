@@ -113,6 +113,9 @@ export class Game {
   private dropping = false;
   private aim: Aim = 'first';
   private paused = false;
+  /** a tactical nudge, e.g. when a topple would crush a crowd */
+  private nightTip = '';
+  private showAllRanges = false;
   private shoring = false;
   /** the dawn screen to return to from the bag view */
   private screen: () => void = () => {};
@@ -182,7 +185,7 @@ export class Game {
         <p class="note lede">Build a fortress on a floating island and survive ${NIGHTS} nights. Build tall to shoot far, or wide to earn gold.</p>
         <nav class="toc">
           <button class="first" data-act="start"><span class="t">Play</span><span class="lead"></span><span class="p">▶</span></button>
-          <button data-act="atelier"><span class="t">Workshop</span><span class="lead"></span><span class="p">${m.seals} ✠ to spend</span></button>
+          <button data-act="atelier"><span class="t">Workshop</span><span class="lead"></span><span class="p">${m.runs ? `${m.seals} seals ✠ to spend` : 'permanent upgrades'}</span></button>
           <button data-act="codex"><span class="t">Challenges</span><span class="lead"></span><span class="p">${m.unlocked.size} / ${CODEX.length} done</span></button>
           <button data-act="howto"><span class="t">How to play</span><span class="lead"></span><span class="p">?</span></button>
         </nav>
@@ -444,6 +447,8 @@ export class Game {
     document.body.classList.remove('paused');
     run.undo = [];
     run.drops = 0; run.rallies = 0; run.shoreups = 0; run.killsTonight = 0;
+    this.showAllRanges = false;
+    this.nightTip = '';
     this.r.setPaths([]);
     this.r.setValid([]);
     run.topples = 1 + this.meta.rank('leverage') + (CONTRACTS[run.contract].topple ?? 0) + (this.has('tipping_point') ? 1 : 0);
@@ -736,6 +741,8 @@ export class Game {
       }
     }
     el.classList.toggle('hot', best >= 3);
+    const tip = best >= 3 && !this.ghostKey ? `${best} enemies are bunched up near a tower: topple it!` : '';
+    if (tip !== this.nightTip) { this.nightTip = tip; if (!this.ghostKey && !this.dropping && !this.shoring) this.setHint(); }
   }
 
   private tryTopple() {
@@ -1412,6 +1419,10 @@ export class Game {
     const run = this.run!;
     const counts = new Map<EnemyId, number>();
     for (const s of run.wave.spawns) counts.set(s.type, (counts.get(s.type) ?? 0) + 1);
+    const st = run.board.stats();
+    const counter = (t: EnemyId) => (st.tallest >= 6 && (t === 'sapper' || t === 'bomber') ? 'vs tall' : st.footprint >= 30 && (t === 'brute' || t === 'climber') ? 'vs wide' : '');
+    const danger = (t: EnemyId) => (ENEMIES[t].minNight >= 99 ? 1e6 : 0) + ENEMIES[t].coreDmg * 100 + ENEMIES[t].hp;
+    const roster = [...counts.entries()].sort((a, b) => danger(b[0]) - danger(a[0]));
     const el = $('threat');
     this.fade(el, this.phase !== 'dawn');
     // the panel gives a little jolt when it switches between "Tonight" and "Attack!"
@@ -1422,7 +1433,7 @@ export class Game {
       <div class="survey">
         ${compass(run.wave.sides)}
         <div class="roster">
-          ${[...counts.entries()].map(([t, n]) => `<div class="r" data-tip="<b>${ENEMIES[t].name}</b><br>${ENEMIES[t].desc}">${enemyGlyph(t)}<span>${ENEMIES[t].name}</span><span class="n">×${n}</span></div>`).join('')}
+          ${roster.map(([t, n]) => `<div class="r" data-tip="<b>${ENEMIES[t].name}</b><br>${ENEMIES[t].desc}">${enemyGlyph(t)}<span>${ENEMIES[t].name}${counter(t) ? ` <em class="ctr">${counter(t)}</em>` : ''}</span><span class="n">×${n}</span></div>`).join('')}
         </div>
       </div>
       ${run.wave.weather ? `<div class="weather" data-tip="<b>${WEATHER[run.wave.weather].name}</b><br>${WEATHER[run.wave.weather].desc}"><span class="ic">${WEATHER[run.wave.weather].icon}</span><span><b>${WEATHER[run.wave.weather].name}</b> ${WEATHER[run.wave.weather].desc}</span></div>` : ''}
@@ -1508,7 +1519,7 @@ export class Game {
         <div class="tabs">${tab('Rotate', 'rotate', { disabled: this.sel < 0, tip: 'Rotate the piece (R)' })}${tab('Undo', 'undo', { disabled: !run.undo.length, tip: 'Take back your last piece (Z)' })}${run.redraws > 0 ? tab(`Redraw ${run.redraws}`, 'redraw', { tip: 'Swap your unused pieces for new ones' }) : ''}${tab('Keep', 'keep', { disabled: this.sel < 0 || !!run.keep, tip: 'Save the selected piece for tomorrow (K)' })}${run.demolishes ? tab(`Demolish ${run.demolishes}`, 'demolish', { red: this.demolishing, tip: 'Remove one of your blocks (X)' }) : tab(`Demolish · ${DEMOLISH_COST}g`, 'paydemo', { disabled: run.gold < DEMOLISH_COST, tip: 'Pay for one more demolish today' })}${tab(`+ Piece · ${this.buyCost()}g`, 'buy', { disabled: run.gold < this.buyCost(), tip: 'Draw one more piece from your bag today. Costs more each time.' })}${tab(`Bag ${run.bag.length}`, 'bag', { tip: this.bagTip() })}</div>`;
     } else if (this.phase === 'night') {
       el.innerHTML = `<span class="left topples${run.topples ? '' : ' spent'}" data-tip="<b>Topples</b><br>Click a tower to knock it onto the enemies.">⤵ Topples <b>${run.topples}</b></span>
-        <div class="tabs">${tab(this.paused ? 'Resume ▶' : 'Pause ❚❚', 'pause', { red: this.paused, tip: 'Pause the night (P). You can still look around.' })}${tab(`Rally${run.rallies ? ' ✓' : ''}`, 'rally', { disabled: run.rallies >= 1, tip: `Once a night: turrets fire twice as fast for ${RALLY_SECONDS} seconds (G)` })}${tab(`Shore up${run.shoreups ? ' ✓' : ''}`, 'shore', { disabled: run.shoreups >= 1, red: this.shoring, tip: 'Once a night: fully repair one tower and give it +50% HP (H)' })}${tab(`Drop stone · ${this.dropCost()}g`, 'drop', { disabled: run.gold < this.dropCost(), red: this.dropping, tip: 'Drop a stone block on the enemies (D). Each drop costs more.' })}${run.topples ? tab('Turn ↻', 'turn', { disabled: !this.ghostKey, tip: 'Change which way the tower falls (R)' }) : ''}${tab(`Aim: ${AIMS[this.aim]}`, 'aim', { tip: 'What turrets shoot first: closest to the core, the strongest enemy, or fliers (A)' })}${tab(`Speed ${this.speed}×`, 'speed', { tip: 'Night speed (F)' })}</div>`;
+        <div class="tabs">${tab(this.paused ? 'Resume ▶' : 'Pause ❚❚', 'pause', { red: this.paused, tip: 'Pause the night (P). You can still look around.' })}${tab(`Rally${run.rallies ? ' ✓' : ''}`, 'rally', { disabled: run.rallies >= 1, tip: `Once a night: turrets fire twice as fast for ${RALLY_SECONDS} seconds (G)` })}${tab(`Shore up${run.shoreups ? ' ✓' : ''}`, 'shore', { disabled: run.shoreups >= 1, red: this.shoring, tip: 'Once a night: fully repair one tower and give it +50% HP (H)' })}${tab(`Drop stone · ${this.dropCost()}g`, 'drop', { disabled: run.gold < this.dropCost(), red: this.dropping, tip: 'Drop a stone block on the enemies (D). Each drop costs more.' })}${run.topples ? tab('Turn ↻', 'turn', { disabled: !this.ghostKey, tip: 'Change which way the tower falls (R)' }) : ''}${tab(this.showAllRanges ? 'Ranges ✓' : 'Ranges', 'ranges', { red: this.showAllRanges, tip: 'Show every turret range (V)' })}${tab(`Aim: ${AIMS[this.aim]}`, 'aim', { tip: 'What turrets shoot first: closest to the core, the strongest enemy, or fliers (A)' })}${tab(`Speed ${this.speed}×`, 'speed', { tip: 'Night speed (F)' })}</div>`;
     } else el.innerHTML = '';
     // the controls rise in when the phase changes, not on every refresh
     if (this.actionsPhase !== this.phase) this.actionsFresh = performance.now() + 450;
@@ -1527,6 +1538,7 @@ export class Game {
       if (a === 'keep') this.keepPiece();
       if (a === 'drop') this.toggleDrop();
       if (a === 'pause') this.togglePause();
+      if (a === 'ranges') this.toggleRanges();
       if (a === 'rally') this.rally();
       if (a === 'shore') this.toggleShore();
       if (a === 'buy') this.buyPiece();
@@ -1558,6 +1570,25 @@ export class Game {
     if (next >= 0) this.selectCard(next);
   }
 
+  /** Night: show (or hide) the range of every turret and ward. */
+  private toggleRanges() {
+    const run = this.run;
+    if (!run || this.phase !== 'night') return;
+    this.showAllRanges = !this.showAllRanges;
+    sfx.click();
+    this.r.setRanges(this.showAllRanges ? this.allRanges() : []);
+    this.renderActions();
+  }
+
+  private allRanges() {
+    const b = this.run!.board, out: { x: number; y: number; r: number; color: number }[] = [];
+    for (const { x, y, z, b: blk } of b.blocks()) {
+      if (!MATS[blk.mat].turret || !b.exposed.has(blk.id)) continue;
+      out.push({ x, y, r: turretRange(blk.mat, z, this.has, rangeBonus(this.mods(), blk.mat)) + (isFoundation(b.blockAt(x, y, z - 1)?.mat) ? FOUNDATION_RANGE : 0), color: MATS[blk.mat].color });
+    }
+    return out;
+  }
+
   private togglePause() {
     if (this.phase !== 'night') return;
     this.paused = !this.paused;
@@ -1583,9 +1614,8 @@ export class Game {
       if (this.demolishing) h = `${touch ? 'Tap a block twice' : 'Click a block'} to remove it. Blocks above it fall down.`;
     } else if (this.phase === 'night') {
       const touch = matchMedia('(pointer: coarse)').matches;
-      h = this.run && this.run.topples > 0
-        ? `${touch ? 'Tap' : 'Click'} a tower to aim a topple at the enemies`
-        : touch ? 'Drag to look around' : 'Drag to look around · F for speed';
+      h = this.run && this.run.topples > 0 && this.run.day <= 2 ? `${touch ? 'Tap' : 'Click'} a tower to aim a topple at the enemies` : '';
+      if (this.nightTip) h = this.nightTip;
       if (this.dropping) h = `Pick a spot next to your fortress to drop a stone (${this.dropCost()} gold). It crushes whatever is under it.`;
     }
     if (extra) h = extra;
@@ -1802,6 +1832,7 @@ export class Game {
       if (this.phase === 'night' && k === 'd') this.toggleDrop();
       if (this.phase === 'night' && (k === 'p' || k === 'escape')) this.togglePause();
       if (this.phase === 'night' && k === 'g') this.rally();
+      if (this.phase === 'night' && k === 'v') this.toggleRanges();
       if (this.phase === 'night' && k === 'h') this.toggleShore();
       if (this.phase === 'night' && k === 'a') $('actions').querySelector<HTMLElement>('[data-act=aim]')?.click();
     });

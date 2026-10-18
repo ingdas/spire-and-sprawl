@@ -47,7 +47,7 @@ function nameFor(shapeName: string, blocks: PBlock[]): string {
   if (counts.size === 1) return `${MATS[blocks[0].mat].name} ${shapeName}`;
   const top = blocks.reduce((a, b) => (b.z > a.z ? b : a));
   const main = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
-  if (top.z > 0 && top.mat !== main) return `${MATS[top.mat].name}-crowned ${shapeName}`;
+  if (top.z > 0 && top.mat !== main) return `${MATS[top.mat].name} ${shapeName}`;
   return `${MATS[main].name} ${shapeName}`;
 }
 

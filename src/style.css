@@ -339,7 +339,7 @@ button:disabled { cursor: not-allowed; }
 .up .pips i { width: 9px; height: 9px; border: 1.5px solid var(--ink); transform: rotate(45deg); }
 .up .pips i.on { background: var(--red); border-color: var(--red); }
 .up .ds { font-size: 13.5px; line-height: 1.4; margin: 5px 0 6px; }
-.up .ds .label { display: block; margin-top: 3px; font-size: 9px; }
+.up .ds .label { display: block; margin-top: 3px; font-size: 10px; }
 .up .buy { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .up.locked { background: repeating-linear-gradient(-45deg, var(--grid-major) 0 1px, transparent 1px 8px), var(--paper); }
 .up.locked .nm, .up.locked .callout { opacity: 0.45; }
@@ -371,7 +371,7 @@ kbd { font-family: var(--mono); font-size: 10.5px; font-weight: 600; border: 1px
 #topbar:empty { display: none; }
 #topbar .cell { padding: 5px 12px 5px; border-left: 1px solid var(--ink); min-width: 64px; position: relative; z-index: 1; }
 #topbar .cell:first-of-type { border-left: 0; }
-#topbar .cell .label { display: block; font-size: 8.5px; }
+#topbar .cell .label { display: block; font-size: 10px; }
 #topbar .cell .v { font-family: var(--display); font-weight: 800; font-size: 24px; line-height: 1; white-space: nowrap; }
 #topbar .cell .v small { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--ink-soft); }
 #topbar .cell.phase { background: var(--ink); color: var(--paper); }
@@ -446,11 +446,11 @@ kbd { font-family: var(--mono); font-size: 10.5px; font-weight: 600; border: 1px
 #tooltip > * { position: relative; z-index: 1; }
 #tooltip b { font-family: var(--display); font-weight: 800; font-size: 16px; text-transform: uppercase; letter-spacing: 0.02em; }
 #tooltip .sw { display: inline-block; width: 9px; height: 9px; border: 1px solid var(--ink); margin-right: 4px; vertical-align: -1px; }
-#tooltip .tip-k { display: block; font-size: 9px; letter-spacing: 0.14em; color: var(--ink-soft); font-weight: 600; text-transform: uppercase; }
+#tooltip .tip-k { display: block; font-size: 10px; letter-spacing: 0.14em; color: var(--ink-soft); font-weight: 600; text-transform: uppercase; }
 
-.banner { position: fixed; top: 34%; left: 50%; transform: translate(-50%, -50%); z-index: 25; pointer-events: none; text-align: center; animation: banner 2.3s ease-out forwards; color: #fff; min-width: 340px; }
+.banner { position: fixed; top: 24%; left: 50%; transform: translate(-50%, -50%); z-index: 25; pointer-events: none; text-align: center; animation: banner 2.3s ease-out forwards; color: #fff; min-width: 340px; }
 .banner .k { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.3em; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
-.banner .t { font-family: var(--display); font-weight: 800; font-size: 108px; line-height: 0.85; text-transform: uppercase; -webkit-text-stroke: 2px #25202e; text-shadow: 5px 5px 0 #25202e; }
+.banner .t { font-family: var(--display); font-weight: 800; font-size: 80px; line-height: 0.85; text-transform: uppercase; -webkit-text-stroke: 2px #25202e; text-shadow: 5px 5px 0 #25202e; }
 .banner .dimline { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-shadow: 0 1px 2px rgba(0,0,0,.6); text-transform: uppercase; }
 .banner .dimline::before, .banner .dimline::after { content: ''; flex: 1; height: 8px; border-top: 1.5px solid #fff; margin-top: 8px; }
 .banner .dimline::before { border-left: 1.5px solid #fff; }
@@ -658,7 +658,7 @@ kbd { font-family: var(--mono); font-size: 10.5px; font-weight: 600; border: 1px
 @keyframes youBob { 50% { translate: 0 -4px; } }
 .map .node.gone { opacity: 0.32; filter: grayscale(1); }
 .map line.gone { opacity: 0.25; }
-.map .node .dg { position: absolute; left: 50%; bottom: -15px; transform: translateX(-50%); font-size: 8px; letter-spacing: 1px; color: var(--red); white-space: nowrap; line-height: 1; }
+.map .node .dg { position: absolute; left: 50%; bottom: -15px; transform: translateX(-50%); font-size: 9px; letter-spacing: 1px; color: var(--red); white-space: nowrap; line-height: 1; }
 .mapinfo .dgline { margin-top: 6px !important; font-size: 13px; }
 .mapinfo .dgline .dg { color: var(--red); letter-spacing: 2px; }
 .mapinfo .legend.nights { margin-top: 8px; }
@@ -687,3 +687,14 @@ body.paused::after { content: 'Paused'; position: fixed; top: 96px; left: 50%; t
   #actions .topples { font-size: 15px; padding: 4px 9px 3px; }
   #actions .topples b { font-size: 19px; }
 }
+
+/* 40: weather badges you can actually read */
+.map .node .wx { width: 24px; height: 24px; right: -11px; top: -11px; font-size: 14px; line-height: 21px; }
+/* 46: enemies that counter your build */
+#threat .roster .ctr { font-style: normal; font-size: 9.5px; font-weight: 700; color: var(--red); border: 1px solid var(--red); padding: 0 3px; margin-left: 3px; text-transform: uppercase; letter-spacing: 0.04em; }
+/* 50: played cards leave the hand; the rest close up */
+#hand .plate.used:not(.taken) { display: none; }
+#hand .plate.used.consumed:not(.taken) { display: block; animation: consumeOut 0.42s ease-in forwards; }
+@keyframes consumeOut { 0% { opacity: 1; transform: translateY(-14px); } 45% { opacity: 0.9; transform: translateY(-40px) scale(0.92); } 100% { opacity: 0; transform: translateY(-60px) scale(0.8); width: 0; padding: 0; margin: 0 -4px; border-width: 0; } }
+/* 61: the title card sits to the side so the island shows */
+@media (min-width: 980px) { .cover { justify-self: start; margin-left: 7vw; width: min(560px, 100%); } .cover h1 { font-size: 100px; } }

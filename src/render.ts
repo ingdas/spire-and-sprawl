@@ -379,7 +379,7 @@ export class Renderer {
   }
 
   /** Aim the camera a little higher as towers grow, so their tops stay on screen. */
-  setFocus(tallest: number) { this.focusY = 1.5 + Math.max(0, tallest - 4) * 0.4; }
+  setFocus(tallest: number) { this.focusY = 1.5 + Math.max(0, tallest - 3) * 0.55; }
 
   /** Faint outlines on every cell where the selected piece can go. */
   setValid(cells: { x: number; y: number; z: number }[]) {
@@ -769,8 +769,9 @@ export class Renderer {
     for (const s of sides) {
       if (this.telegraphRoot.children.some(o => o.userData.side === s && o.userData.leave === undefined)) continue;
       const a = outlined(GEO.arrow, mat, 0.05, false);
-      const d = C + 2.2;
-      const pos = [new THREE.Vector3(0, 0.6, -d), new THREE.Vector3(d, 0.6, 0), new THREE.Vector3(0, 0.6, d), new THREE.Vector3(-d, 0.6, 0)][s];
+      // the arrows float out past the island's edge, clear of the HUD
+      const d = C + 3.1;
+      const pos = [new THREE.Vector3(0, 1.3, -d), new THREE.Vector3(d, 1.3, 0), new THREE.Vector3(0, 1.3, d), new THREE.Vector3(-d, 1.3, 0)][s];
       a.position.copy(pos);
       a.rotation.x = Math.PI / 2;
       a.rotation.order = 'YXZ';
@@ -841,9 +842,9 @@ export class Renderer {
       }
     }
     const hpBar = new THREE.Group();
-    const w = type === 'boss' ? 1.6 : 0.7;
-    const bg = new THREE.Mesh(new THREE.PlaneGeometry(w + 0.06, 0.13), new THREE.MeshBasicMaterial({ color: PALETTE.outline, depthTest: false }));
-    const hpFill = new THREE.Mesh(new THREE.PlaneGeometry(w, 0.08), new THREE.MeshBasicMaterial({ color: 0xff5470, depthTest: false }));
+    const w = type === 'boss' ? 1.8 : 0.95;
+    const bg = new THREE.Mesh(new THREE.PlaneGeometry(w + 0.07, 0.17), new THREE.MeshBasicMaterial({ color: PALETTE.outline, depthTest: false }));
+    const hpFill = new THREE.Mesh(new THREE.PlaneGeometry(w, 0.11), new THREE.MeshBasicMaterial({ color: 0xff5470, depthTest: false }));
     hpFill.geometry.translate(w / 2, 0, 0);
     hpFill.position.x = -w / 2;
     hpFill.position.z = 0.002;

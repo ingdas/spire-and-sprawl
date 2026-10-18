@@ -78,7 +78,7 @@ export class Board {
         if (this.height(nx, ny) > 0) touches = true;
       }
     }
-    if (!touches && !touchesCore) return { ok: false, reason: 'Must connect to your settlement', cells };
+    if (!touches && !touchesCore) return { ok: false, reason: 'Must touch your fortress or the core', cells };
     return { ok: true, cells };
   }
 
