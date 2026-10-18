@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { isMuted, setMuted, sfx } from './audio';
+import { isMuted, music, setMuted, setVolumes, sfx } from './audio';
+import { Settings, loadSettings, saveSettings } from './settings';
 import { Board, Placement } from './board';
-import { CORE, ENEMIES, EnemyId, HAND_SIZE, MATS, MatId, N, NIGHTS, START_CORE_HP, START_GOLD, UNIQUES } from './config';
+import { CORE, ENEMIES, applyColorBlind, EnemyId, HAND_SIZE, MATS, MatId, N, NIGHTS, START_CORE_HP, START_GOLD, UNIQUES } from './config';
 import { CODEX, CodexDef, HEATS, Meta, RelicId, RunStats, SEALS, UPGRADES, relicDef } from './meta';
 import { FOUNDERS, FounderId, Piece, make, pivotOf, randomPiece, rotatePiece, uniquePiece } from './pieces';
 import { Renderer, world } from './render';
@@ -82,6 +83,7 @@ const DEMOLISH_COST = 3;
 const CAMP_HEAL = 6;
 const CAMP_GOLD = 6;
 const DROP_COST = 3;
+const RUN_KEY = 'spire-sprawl-run';
 /** a night's extra actions */
 const RALLY_SECONDS = 5;
 /** a bonus topple every this many kills in one night */
@@ -139,8 +141,12 @@ export class Game {
   private threatPhase = '';
   private last = performance.now();
 
+  settings: Settings = loadSettings();
+
   constructor() {
+    this.applySettings();
     this.r = new Renderer($('app'));
+    this.r.setCameraSpeed(this.settings.camSpeed);
     this.bindInput();
     this.bindTooltips();
     this.showTitle();
@@ -175,6 +181,7 @@ export class Game {
 
   showTitle() {
     this.phase = 'title';
+    music('day');
     this.night?.dispose();
     this.night = null;
     this.run = null;
@@ -189,14 +196,18 @@ export class Game {
         <h1>Spire<br><span class="amp">&amp;</span>Sprawl</h1>
         <p class="note lede">Build a fortress on a floating island and survive ${NIGHTS} nights. Build tall to shoot far, or wide to earn gold.</p>
         <nav class="toc">
-          <button class="first" data-act="start"><span class="t">Play</span><span class="lead"></span><span class="p">▶</span></button>
+          ${this.savedRun() ? `<button class="first" data-act="continue"><span class="t">Continue</span><span class="lead"></span><span class="p">night ${this.savedRun()!.day} · ${BIOMES[this.savedRun()!.route[this.savedRun()!.act]].name}</span></button>` : ''}
+          <button class="${this.savedRun() ? '' : 'first'}" data-act="start"><span class="t">${this.savedRun() ? 'New run' : 'Play'}</span><span class="lead"></span><span class="p">▶</span></button>
           <button data-act="atelier"><span class="t">Workshop</span><span class="lead"></span><span class="p">${m.runs ? `${m.seals} seals ✠ to spend` : 'permanent upgrades'}</span></button>
           <button data-act="codex"><span class="t">Challenges</span><span class="lead"></span><span class="p">${m.unlocked.size} / ${CODEX.length} done</span></button>
           <button data-act="howto"><span class="t">How to play</span><span class="lead"></span><span class="p">?</span></button>
+          <button data-act="settings"><span class="t">Settings</span><span class="lead"></span><span class="p">⚙</span></button>
         </nav>
         ${m.runs ? `<div class="foot"><span class="label">Runs ${m.runs} · Wins ${m.wins} · Best night ${m.bestNight || '—'}</span></div>` : ''}
       </section>`, false, {
-      start: () => { this.fullscreen(); this.showFounders(); },
+      start: () => { this.fullscreen(); if (this.savedRun()) this.ask('Start a new run?', 'Your saved run will be lost.', 'New run', () => { this.clearSave(); this.showFounders(); }); else this.showFounders(); },
+      continue: () => { this.fullscreen(); this.loadRun(); },
+      settings: () => this.showSettings(() => this.showTitle()),
       atelier: () => this.showAtelier(() => this.showTitle()),
       codex: () => this.showCodex(),
       howto: () => this.showHowTo(),
@@ -366,6 +377,95 @@ export class Game {
     else this.showMap();
   }
 
+  // ======================= saved runs =======================
+
+  /** The run is saved every time you stand on the map, so closing the tab costs nothing. */
+  private saveRun() {
+    const run = this.run;
+    if (!run) return;
+    try {
+      const data = { ...run, board: run.board.snapshot(), stats: { ...run.stats, placedMats: [...run.stats.placedMats], finalMats: [...run.stats.finalMats] }, undo: [] };
+      localStorage.setItem(RUN_KEY, JSON.stringify(data));
+    } catch { /* storage full or blocked: play on without saving */ }
+  }
+
+  private savedRun(): { day: number; route: BiomeId[]; act: number } | null {
+    try { const s = localStorage.getItem(RUN_KEY); return s ? JSON.parse(s) : null; } catch { return null; }
+  }
+
+  private clearSave() { try { localStorage.removeItem(RUN_KEY); } catch { /* fine */ } }
+
+  private loadRun() {
+    let data: any;
+    try { data = JSON.parse(localStorage.getItem(RUN_KEY)!); } catch { return this.showTitle(); }
+    sfx.click();
+    this.r.clearAll();
+    const board = new Board();
+    board.restore(data.board);
+    // pieces are shared by reference between bag, draw pile and hand: rebuild those links
+    const bag: Piece[] = data.bag;
+    const same = (p: Piece) => bag.find(b => JSON.stringify(b) === JSON.stringify(p)) ?? p;
+    this.run = {
+      ...data, board, bag,
+      draw: data.draw.map(same), hand: data.hand.map(same), keep: data.keep ? same(data.keep) : null,
+      stats: { ...data.stats, placedMats: new Set(data.stats.placedMats), finalMats: new Set(data.stats.finalMats) },
+      undo: [],
+    } as Run;
+    this.nums.clear();
+    this.relicsShown = 0;
+    this.showHud(true);
+    this.r.setBiome(this.biome);
+    this.r.setVents(this.run!.vents);
+    this.r.syncBoard(board);
+    this.trackStats();
+    this.showMap();
+  }
+
+  // ======================= settings =======================
+
+  private applySettings() {
+    const s = this.settings;
+    setVolumes(s.sfx, s.music);
+    applyColorBlind(s.colorBlind);
+    document.body.classList.toggle('reduce-motion', s.reduceMotion);
+    this.r?.setCameraSpeed(s.camSpeed);
+  }
+
+  private showSettings(back: () => void) {
+    sfx.click();
+    const s = this.settings;
+    const slider = (key: 'sfx' | 'music' | 'camSpeed', label: string, min: number, max: number) => `
+      <label class="setting"><span>${label}</span>
+        <span class="steps">${[0, 1, 2, 3, 4].map(i => { const v = +(min + ((max - min) * i) / 4).toFixed(2); return `<button class="chip ${Math.abs(s[key] - v) < 0.01 ? 'on' : ''}" data-act="${key}_${i}">${key === 'camSpeed' ? `${v}×` : i === 0 ? 'Off' : `${i * 25}%`}</button>`; }).join('')}</span></label>`;
+    const toggle = (key: 'reduceMotion' | 'colorBlind', label: string, note: string) => `
+      <label class="setting"><span>${label}<small>${note}</small></span><span class="steps"><button class="chip ${s[key] ? '' : 'on'}" data-act="${key}_0">Off</button><button class="chip ${s[key] ? 'on' : ''}" data-act="${key}_1">On</button></span></label>`;
+    const acts: Record<string, () => void> = { back };
+    for (const [key, min, max] of [['sfx', 0, 1], ['music', 0, 1], ['camSpeed', 0.5, 1.5]] as const)
+      for (let i = 0; i < 5; i++) acts[`${key}_${i}`] = () => { s[key] = +(min + ((max - min) * i) / 4).toFixed(2); this.commitSettings(back); };
+    for (const key of ['reduceMotion', 'colorBlind'] as const)
+      for (const i of [0, 1]) acts[`${key}_${i}`] = () => { s[key] = !!i; this.commitSettings(back); };
+    this.overlay(sheet({
+      kicker: '',
+      title: 'Settings',
+      body: `<div class="settings">
+        ${slider('sfx', 'Sound effects', 0, 1)}
+        ${slider('music', 'Music', 0, 1)}
+        ${slider('camSpeed', 'Camera speed', 0.5, 1.5)}
+        ${toggle('reduceMotion', 'Reduce motion', 'Fewer menu and HUD animations')}
+        ${toggle('colorBlind', 'Colour-blind colours', 'Block colours that are easier to tell apart')}
+      </div>`,
+      foot: tab('Back', 'back'),
+    }), true, acts);
+  }
+
+  private commitSettings(back: () => void) {
+    saveSettings(this.settings);
+    this.applySettings();
+    // block colours changed: repaint every block
+    if (this.run) { this.r.clearAll(); this.r.syncBoard(this.run.board); this.r.setVents(this.run.vents); }
+    this.showSettings(back);
+  }
+
   // ======================= journey between biomes =======================
 
   /** The island is carried to the next biome: pay the travel damage, land, read the new rules. */
@@ -491,6 +591,7 @@ export class Game {
     });
     this.r.setWeather(run.wave.weather);
     this.r.setGates(run.wave.sides);
+    music(run.wave.guardian ? 'boss' : 'night');
     // a boss arrives with ceremony: the camera turns to its gate and time slows for a moment
     if (run.wave.guardian) {
       const s = run.wave.sides[0], d = (N - 1) / 2 + 1.4;
@@ -807,6 +908,7 @@ export class Game {
     this.r.setWeather(null);
     this.r.setGates([]);
     this.clearEdgeMarks();
+    music('day');
     sfx.dawn();
     // fountains repair their surroundings
     for (const f of [...run.board.blocks()].filter(b => b.b.mat === 'fountain')) {
@@ -854,6 +956,8 @@ export class Game {
 
   private endRun(won: boolean) {
     const run = this.run!;
+    this.clearSave();
+    music('off');
     this.phase = 'end';
     this.night?.dispose();
     this.night = null;
@@ -1091,11 +1195,16 @@ export class Game {
     const m = run.map;
     this.phase = 'dawn';
     this.screen = () => this.showMap();
+    this.saveRun();
     const next = reachable(m);
     // any spot can be inspected; only the next ones can be entered
     const sel0 = m.nodes[this.mapSel];
     if (!sel0 || m.visited.includes(sel0.id) || sel0.row <= (m.at === null ? -1 : m.nodes[m.at].row)) this.mapSel = next[0]?.id ?? -1;
-    const acts: Record<string, () => void> = { bag: () => this.showBag('view') };
+    const acts: Record<string, () => void> = {
+      bag: () => this.showBag('view'),
+      settings: () => this.showSettings(() => this.showMap()),
+      quit: () => this.ask('Quit to the title?', 'Your run is saved. Pick Continue on the title screen to carry on.', 'Quit', () => { this.showHud(false); this.showTitle(); }),
+    };
     for (const n of m.nodes) acts[`n${n.id}`] = () => { if (this.mapSel === n.id && next.includes(n)) return this.enterNode(n); this.mapSel = n.id; sfx.click(); this.showMap(); };
     const sel = m.nodes[this.mapSel];
     const canGo = !!sel && next.includes(sel);
@@ -1145,7 +1254,7 @@ export class Game {
             <p class="mapnote">${nextBiome ? `After the boss your island flies to ${BIOMES[nextBiome].name} ✈` : 'The boss at the top is the final battle.'}</p>
             <div class="legend">${legend}</div>
             <div class="legend nights">${(['standard', 'calm', 'bounty', 'siege', 'skyward'] as ContractId[]).map(c => `<span><i class="f">${CONTRACTS[c].icon}</i>${CONTRACTS[c].name}</span>`).join('')}<span><i class="f">${GUARDIAN_INFO.icon}</i>Boss</span><span><i class="dgk">●</i>Danger</span></div>
-            <div class="bagbtn">${tab(`See your bag (${run.bag.length})`, 'bag')}</div>
+            <div class="bagbtn">${tab(`See your bag (${run.bag.length})`, 'bag')}${tab('Settings', 'settings')}${tab('Quit to title', 'quit')}</div>
           </aside>
         </div>`,
       foot: `<span class="label">${matchMedia('(pointer: coarse)').matches ? 'Tap a glowing spot, then Go' : 'Click a glowing spot to choose it'}</span>${stamp(canGo ? (fight ? `Start day ${run.day}` : `Go: ${info!.name}`) : 'Not yet', 'go', '', !canGo)}`,

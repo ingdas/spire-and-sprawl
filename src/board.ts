@@ -42,7 +42,12 @@ export class Board {
 
   /** Copy of every column (blocks are copied too), for undoing a placement. */
   snapshot(): (Block | null)[][] { return this.cols.map(c => c.map(b => (b ? { ...b } : null))); }
-  restore(cols: (Block | null)[][]) { this.cols = cols.map(c => c.map(b => (b ? { ...b } : null))); this.recompute(); }
+  restore(cols: (Block | null)[][]) {
+    this.cols = cols.map(c => c.map(b => (b ? { ...b } : null)));
+    // a loaded board must never hand out an id that's already in use
+    for (const c of this.cols) for (const b of c) if (b && b.id >= blockId) blockId = b.id + 1;
+    this.recompute();
+  }
   height(x: number, y: number) { return this.inBounds(x, y) ? this.col(x, y).length : 0; }
   blockAt(x: number, y: number, z: number): Block | null {
     if (!this.inBounds(x, y)) return null;

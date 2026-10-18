@@ -391,6 +391,8 @@ export class Renderer {
     this.camera.updateProjectionMatrix();
   }
 
+  setCameraSpeed(k: number) { this.controls.rotateSpeed = k; this.controls.zoomSpeed = k; }
+
   /** Aim the camera a little higher as towers grow, so their tops stay on screen. */
   setFocus(tallest: number) { this.focusY = 1.5 + Math.max(0, tallest - 3) * 0.55; }
 

@@ -164,3 +164,12 @@ export const PALETTE = {
   ghostOk: 0x7af0c0,
   ghostBad: 0xff5a6a,
 };
+
+/** Okabe-Ito based colours for the materials that are easy to confuse, used by the colour-blind setting. */
+export const CB_COLORS: Partial<Record<MatId, number>> = {
+  garden: 0x009e73, crystal: 0x56b4e9, ember: 0xe69f00, ward: 0xcc79a7, beacon: 0xf0e442, stone: 0xd8d2c4,
+};
+const BASE_COLORS = Object.fromEntries(Object.entries(MATS).map(([k, m]) => [k, m.color])) as Record<MatId, number>;
+export function applyColorBlind(on: boolean) {
+  for (const k of Object.keys(MATS) as MatId[]) MATS[k].color = on && CB_COLORS[k] !== undefined ? CB_COLORS[k]! : BASE_COLORS[k];
+}
