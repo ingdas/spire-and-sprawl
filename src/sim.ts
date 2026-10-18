@@ -64,17 +64,20 @@ export const CONTRACTS: Record<ContractId, ContractDef> = {
 /** Waves adapt to the board: tall builds draw sappers, sprawling ones draw brutes. */
 export function makeWave(night: number, board?: { tallest: number; footprint: number; turrets: number }, contract: ContractDef = CONTRACTS.standard): Wave {
   // guardian nights trade part of the regular wave for the guardian itself
-  const budgetBase = (2 + night * 3.5 + night * night * 0.6) * contract.budget * (night === 4 || night === 8 ? 0.6 : 1);
-  const hpScale = Math.pow(1.21, night - 1) * Math.min(2.6, 1 + 0.3 * Math.max(0, night - 2));
+  // the first night in a new land is a little lighter: the journey already cost you blocks
+  const budgetBase = (2 + night * 3.5 + night * night * 0.6) * contract.budget * (night === 4 || night === 8 ? 0.6 : 1) * (night === 5 ? 0.85 : night === 9 ? 0.75 : 1);
+  const hpScale = Math.pow(1.2, night - 1) * Math.min(2.4, 1 + 0.3 * Math.max(0, night - 2));
   const sideCount = night <= 2 ? 1 : night <= 6 ? 1 + (Math.random() < 0.55 ? 1 : 0) : 2 + (Math.random() < 0.45 ? 1 : 0);
   const sides = [0, 1, 2, 3].sort(() => Math.random() - 0.5).slice(0, sideCount).sort();
-  const weights: Partial<Record<EnemyId, number>> = { shard: 3, runner: 2, flier: 1.4, brute: 0.7, sapper: 0.8, climber: 0.5, bomber: 0.45, bulwark: 0.35 };
+  const weights: Partial<Record<EnemyId, number>> = { shard: 3, runner: 2, flier: 1.2, brute: 0.7, sapper: 0.8, climber: 0.5, bomber: 0.45, bulwark: 0.35 };
   if (board && board.tallest >= 7) weights.sapper! *= 1 + (board.tallest - 6) * 0.35;
   if (board && board.footprint >= 30) weights.brute! *= 1 + (board.footprint - 29) * 0.05;
   // counter-enemies: each one leans on a different dominant build
   if (board && board.footprint >= 24) weights.climber! *= 1 + (board.footprint - 23) * 0.06;
+  // walls can't stop fliers, so a sprawling fortress draws more of them
+  if (board && board.footprint >= 30) weights.flier! *= 1 + (board.footprint - 29) * 0.045;
   if (board && board.tallest >= 6) weights.bomber! *= 1 + (board.tallest - 5) * 0.2;
-  if (board && board.turrets >= 8) weights.bulwark! *= 1 + (board.turrets - 7) * 0.12;
+  if (board && board.turrets >= 8) weights.bulwark! *= 1 + (board.turrets - 7) * 0.08;
   for (const [id, w] of Object.entries(contract.weights ?? {})) weights[id as EnemyId] = (weights[id as EnemyId] ?? 1) * w;
   // a contract can bring its featured enemies a few nights early
   const pool = (Object.values(ENEMIES) as EnemyDef[]).filter(e => e.cost > 0 && e.minNight <= night + (contract.weights?.[e.id] ? 3 : 0));
@@ -168,6 +171,8 @@ export function reactionOf(mat: MatId, touching: Set<MatId>): Reaction | null {
 export const STACK_BONUS = 0.25;
 /** seconds a toppled tower takes to swing down (the renderer animates the same swing) */
 export const TOPPLE_SWING = 0.4;
+/** crystals at this height or higher deal +60% damage to flying enemies */
+export const HIGH_AA = 3;
 /** Damage per toppled block landing on an enemy, before the night's HP scaling. */
 export const TOPPLE_DMG = 5;
 
@@ -547,7 +552,8 @@ export class Night {
         const dmg = TURRET.crystal.dmg * tu.dmgMult * this.hooks.mods.crystal;
         this.r.shot(from, this.enemyWorld(tgt), tu.react ? 0xd7f7ff : 0x9ff3ff);
         const wasAlive = !tgt.dead;
-        this.damage(tgt, dmg);
+        // height is the answer to the air: high crystals hit fliers and bombers much harder
+        this.damage(tgt, dmg * (tgt.mode === 'fly' && tu.z >= HIGH_AA ? 1.6 : 1));
         if (tu.react === 'bloom' && wasAlive && tgt.dead) this.hooks.gold(1, this.enemyWorld(tgt));
         if (tu.react === 'glint') {
           const next = this.nearestTarget(tgt.pos.x, tgt.pos.y, 1.8, tu.hitsAir, true, tgt);

@@ -337,7 +337,7 @@ export class Game {
       body: `<div class="manual">
         ${item('1', 'Build by day', `You get ${HAND_SIZE} pieces each day. A piece lands on top of whatever is below it, so you can build <b>up</b> or <b>out</b>. Pieces must touch your buildings or the core. You can <b>keep</b> one piece for tomorrow and <b>demolish</b> 2 blocks a day.`)}
         ${item('2', 'Survive the night', 'Enemies come from the <b class="red">red</b> sides. They chew through the <b>bottom</b> block of a column to reach the core.')}
-        ${item('3', 'Tall towers', 'Turrets shoot further the higher they are. Stack the same material to make it stronger: three crystals on top of each other hit harder than one. A turret standing on stone (or rock) shoots 1 cell further.')}
+        ${item('3', 'Tall towers', 'Turrets shoot further the higher they are, and crystals 3 or more blocks up hit fliers much harder. Stack the same material to make it stronger: three crystals on top of each other hit harder than one. A turret standing on stone (or rock) shoots 1 cell further.')}
         ${item('4', 'Topple!', 'At night, click a tower to knock it over. Every block that lands on an enemy crushes it, and the tower becomes a wall. What it is made of matters: ember splashes fire, crystal shatters into shards, ward leaves a slow field, garden drops gold. You get one topple per night.')}
         ${item('5', 'Combos', `A turret touching a certain block (side, above or below) gets a twist, and a small star shows on it: ${Object.values(COMBOS).map(c => `${MATS[c.turret].name.toLowerCase()} + ${MATS[c.with].name.toLowerCase()} = <b>${c.name}</b>`).join(', ')}. Hover a tower in the day to see what it does.`)}
         ${item('6', 'Gold tips', 'Starting the night with pieces still in hand pays +1 gold each. In the day you can buy an extra piece or an extra demolish. At night an emergency stone costs gold (more each time). Shops have a premium shelf for big savers, and the Treasury Vault relic pays interest.')}
@@ -362,7 +362,7 @@ export class Game {
     this.r.clearAll();
     const meta = this.meta;
     const hot = meta.heat >= 2 ? 3 : 0;
-    const coreMax = START_CORE_HP + (meta.has('untouched') ? 3 : 0) + 2 * meta.rank('foundations') - hot;
+    const coreMax = START_CORE_HP + (meta.has('untouched') ? 3 : 0) + 3 * meta.rank('foundations') - hot;
     this.run = {
       board: new Board(), founder, bag: FOUNDERS[founder].bag(), draw: [], hand: [], used: [],
       gold: Math.max(0, START_GOLD + 2 * meta.rank('treasury') - hot), coreHp: coreMax, coreMax, day: 1, relics: [],
@@ -621,7 +621,7 @@ export class Game {
   private mods() {
     const m = this.meta, b = this.biome;
     const t = this.run?.temper ?? {};
-    return { crystal: (1 + 0.1 * m.rank('lens')) * (1 + 0.15 * (t.crystal ?? 0)), ember: (1 + 0.1 * m.rank('kiln')) * b.emberMult * (1 + 0.15 * (t.ember ?? 0)), range: 0.25 * m.rank('eye'), crystalRange: b.crystalRange, wardRange: 0.4 * (t.ward ?? 0) };
+    return { crystal: (1 + 0.15 * m.rank('lens')) * (1 + 0.15 * (t.crystal ?? 0)), ember: (1 + 0.15 * m.rank('kiln')) * b.emberMult * (1 + 0.15 * (t.ember ?? 0)), range: 0.25 * m.rank('eye'), crystalRange: b.crystalRange, wardRange: 0.4 * (t.ward ?? 0) };
   }
 
   private coreDamage(n: number, by?: EnemyId, at?: THREE.Vector3) {
@@ -939,7 +939,7 @@ export class Game {
     const hearts = [...run.board.blocks()].filter(b => b.b.mat === 'rootheart');
     const boosted = [...run.board.blocks()].filter(b => b.b.mat === 'garden' && (this.has('deep_roots') || b.z === 0) && hearts.some(h => Math.max(Math.abs(h.x - b.x), Math.abs(h.y - b.y)) <= 2)).length;
     const gCount = (this.has('deep_roots') ? st.gardens : st.groundGardens) + boosted;
-    const gardens = Math.floor(2.5 * Math.sqrt(gCount) * this.biome.gardenMult);
+    const gardens = Math.floor(1.85 * Math.sqrt(gCount) * this.biome.gardenMult);
     if (gardens) income.push([this.has('deep_roots') ? 'Gardens (Deep Roots)' : 'Gardens on the ground', gardens]);
     if (this.has('cartographer')) income.push(['Cartographer', Math.floor(st.footprint / 6)]);
     if (this.has('arches')) income.push(['Vaulted Arches', Math.min(6, Math.floor(st.hollows / 2))]);

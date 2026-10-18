@@ -140,7 +140,7 @@ export const ENEMIES: Record<EnemyId, EnemyDef> = {
   },
   flier: {
     id: 'flier', name: 'Flier', hp: 5, speed: 1.5, chew: 0, coreDmg: 1, bounty: 1, cost: 2, minNight: 3,
-    color: 0xb455e8, size: 0.34, desc: 'Flies over everything. Only raised crystals (not on the ground) can hit it.',
+    color: 0xb455e8, size: 0.34, desc: 'Flies over everything. Only raised crystals can hit it, and crystals 3+ blocks up hit it much harder. More come when you build wide.',
   },
   brute: {
     id: 'brute', name: 'Brute', hp: 15, speed: 0.7, chew: 3, coreDmg: 3, bounty: 2, cost: 5, minNight: 4,

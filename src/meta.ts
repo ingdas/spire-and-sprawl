@@ -118,12 +118,12 @@ export type UpgradeId =
 export interface UpgradeDef { id: UpgradeId; name: string; icon: string; costs: number[]; desc: (rank: number) => string; locked?: CodexId }
 
 export const UPGRADES: UpgradeDef[] = [
-  { id: 'foundations', name: 'Foundations', icon: '▣', costs: [4, 8, 14, 20, 28], desc: r => `+${2 * r} max core HP` },
+  { id: 'foundations', name: 'Foundations', icon: '▣', costs: [4, 8, 14, 20, 28], desc: r => `+${3 * r} max core HP` },
   { id: 'treasury', name: 'Treasury', icon: '⊚', costs: [3, 6, 10, 16], desc: r => `start each run with +${2 * r} gold` },
   { id: 'tithe', name: 'Standing Tithe', icon: '⊕', costs: [6, 12, 20], desc: r => `+${r} gold every morning` },
   { id: 'masonry', name: 'Masonry', icon: '▤', costs: [5, 10, 16], desc: r => `stone blocks +${15 * r}% HP` },
-  { id: 'lens', name: 'Lens Grinding', icon: '◇', costs: [6, 12, 20], desc: r => `crystal damage +${10 * r}%` },
-  { id: 'kiln', name: 'Kiln', icon: '△', costs: [6, 12, 20], desc: r => `ember damage +${10 * r}%` },
+  { id: 'lens', name: 'Lens Grinding', icon: '◇', costs: [6, 12, 20], desc: r => `crystal damage +${15 * r}%` },
+  { id: 'kiln', name: 'Kiln', icon: '△', costs: [6, 12, 20], desc: r => `ember damage +${15 * r}%` },
   { id: 'leverage', name: 'Leverage', icon: '⤵', costs: [8, 16, 26], desc: r => `topple ${1 + r} towers every night` },
   { id: 'draughtsman', name: 'Draughtsman', icon: '✎', costs: [10, 22], desc: r => `${3 + r} free pieces to choose from each morning` },
   { id: 'redraft', name: 'Redraft', icon: '↻', costs: [8, 18], desc: r => `swap your unused pieces ${r}× per day`, locked: 'first_light' },

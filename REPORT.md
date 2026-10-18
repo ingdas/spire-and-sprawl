@@ -88,4 +88,40 @@
 
 ## Balance
 
-See the balancing section below. It's filled in after the balancing run.
+A bot played full runs against a frozen build in performance mode (`?debug&perf`, 10× night speed). It ran three styles (balanced, tall, wide), each with no workshop upgrades and with "mid" upgrades (about 9 ranks: Foundations 2, Treasury 2, Lens, Kiln, Leverage, Draughtsman, Masonry). The bot plays reasonably but not cleverly, so a good human should do better than these numbers.
+
+**Targets.** Without upgrades, most runs end around nights 7 to 10 and wins are rare. With mid upgrades, 30–50% of runs are won. The three styles end within about 1.5 nights of each other, and no single night is a wall.
+
+**Average night reached (12 = a win).**
+
+| Upgrades | Style | Before | Round 1 | Round 2 | Round 3 | Final (round 4) |
+|---|---|---|---|---|---|---|
+| None | Balanced | 9.4 | 7.6 | 10.0 | 9.0 | 9.7 |
+| None | Tall | 8.4 | 9.0 | 9.5 | 10.4 | 9.5 |
+| None | Wide | 10.8 | 9.6 | 10.3 | 11.0 | 10.0 |
+| Mid | Balanced | 9.0 | 9.2 | 10.7 | 10.5 | 10.8 |
+| Mid | Tall | 9.6 | 10.0 | 11.0 | 11.1 | 10.7 |
+| Mid | Wide | 10.8 | 10.4 | 11.8 | 11.6 | 11.7 |
+
+**Wins in the final round:** 3 of 30 without upgrades (10%) and 13 of 30 with mid upgrades (43%). Rounds 1 to 3 used 5 to 8 runs per style; the final round used 10.
+
+**What the bot found, and the fix for each.**
+
+- **Fliers did most of the core damage, and walls can't stop them.**
+  - Crystals 3 or more blocks up now deal +60% damage to flying enemies. This gives tall builds a clear job.
+  - The base flier weight dropped from 1.4 to 1.2.
+  - Wide fortresses (30+ cells) now draw more fliers, so sprawling isn't a free win.
+- **Night 9 was a wall.** It comes straight after the second journey, which already cuts blocks off the island. The first night in a new land is now lighter: ×0.85 on night 5 and ×0.75 on night 9.
+- **Late enemies outscaled every build.** Enemy HP growth went from 1.21× to 1.2× per night, and the multiplier cap from 2.6 to 2.4.
+- **The workshop didn't move the needle.**
+  - Foundations give +3 core HP per rank (was +2).
+  - Lens Grinding and Kiln give +15% per rank (was +10%).
+- **Tall builds died to bulwarks; wide builds won too often.**
+  - Bulwarks still scale with the number of turrets, but more gently (+8% per turret, was +12%).
+  - Garden income dropped from 2.5×√gardens to 1.85×√gardens.
+
+**Still open.**
+
+- Wide is still the strongest style with upgrades (7 of 10 wins), but only about 1 night ahead of the others.
+- Nights 9 and 10 are still where most runs end. That's the start of the last act, so it's partly by design.
+- With 10 runs per cell, a single result moves by about ±0.5 night, so small differences are noise.
