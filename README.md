@@ -99,6 +99,20 @@ Every UI surface is a sheet of paper on the drafting table, kept simple enough f
 
 Type is Big Shoulders Display for headings and Rubik for text.
 
+## Motion
+
+Nothing just appears.
+
+- **Blocks:** they fall with gravity, stretch while falling, squash on landing and settle on a spring.
+- **Toppled towers:** they swing around their base edge as one rigid piece. The crush happens when the tower lands (`TOPPLE_SWING`). Blocks that tip past the island edge drop away into the sky.
+- **Destroyed blocks:** they swell for a beat before bursting.
+- **Enemies:** they pop up out of the ground and hop with squash on every step. They flinch when hit, and stretch upward before they burst. A white chip trails the HP bar.
+- **Turrets:** they recoil when they fire.
+- **Sheets:** they slide in and deal their cards with a little overshoot, and lift off before they leave. Re-rendering the same sheet only pops what changed.
+- **Numbers:** gold and HP count up or down.
+- **Hand:** cards are dealt in, and played cards fly off.
+- **Reduced motion:** `prefers-reduced-motion` turns the animations off.
+
 ## Meta progression
 
 - **Seals and the Workshop.** Every run pays seals, win or lose. Put them into 13 upgrade tracks in the Workshop; some stay locked until a challenge is done. Upgrades can be refunded in full at any time between runs (one rank, or everything), so you can try different builds.

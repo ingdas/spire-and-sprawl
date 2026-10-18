@@ -110,9 +110,9 @@ button:disabled { cursor: not-allowed; }
   font-family: var(--display); font-weight: 800; font-size: 17px; letter-spacing: 0.04em; text-transform: uppercase; line-height: 1;
   padding: 8px 14px 7px; color: var(--ink); white-space: nowrap; background: var(--paper);
   border: 2px solid var(--ink); border-radius: 3px; box-shadow: 0 3px 0 var(--ink);
-  transition: transform 0.06s, box-shadow 0.06s, background 0.12s;
+  transition: transform 0.12s cubic-bezier(0.3, 1.6, 0.5, 1), box-shadow 0.12s, background 0.12s;
 }
-.tab:hover:not(:disabled) { background: var(--paper-2); }
+.tab:hover:not(:disabled) { background: var(--paper-2); transform: translateY(-1px); box-shadow: 0 4px 0 var(--ink); }
 .tab:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 0 0 var(--ink); }
 .tab:disabled { opacity: 0.35; box-shadow: none; transform: translateY(3px); }
 .tab.red { color: #fff; background: var(--red); border-color: var(--ink); }
@@ -122,11 +122,11 @@ button:disabled { cursor: not-allowed; }
 .stamp {
   font-family: var(--display); font-weight: 800; text-transform: uppercase; font-size: 24px; letter-spacing: 0.04em;
   color: var(--red); padding: 8px 18px 7px; border: 3px solid var(--red); outline: 1px solid var(--red); outline-offset: 3px;
-  transform: rotate(-2.5deg); transition: transform 0.12s, background 0.12s; position: relative; line-height: 1;
+  transform: rotate(-2.5deg); transition: transform 0.18s cubic-bezier(0.3, 1.7, 0.5, 1), background 0.12s; position: relative; line-height: 1;
 }
 .stamp small { display: block; font-family: var(--mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.18em; margin-top: 3px; }
 .stamp:hover:not(:disabled) { background: var(--red-wash); transform: rotate(-1deg); }
-.stamp:active:not(:disabled) { transform: rotate(-3deg) scale(0.94); }
+.stamp:active:not(:disabled) { transform: rotate(-3deg) scale(0.92); transition-duration: 0.05s; }
 .stamp:disabled { opacity: 0.35; }
 
 /* stamp impression left on taken items */
@@ -282,7 +282,6 @@ button:disabled { cursor: not-allowed; }
 
 .sheet {
   width: min(1040px, 100%); max-height: calc(100vh - 48px); overflow-x: hidden; overflow-y: auto; padding: 26px 30px 22px;
-  animation: sheetIn 0.28s ease-out;
 }
 @keyframes sheetIn { from { opacity: 0; transform: translateY(16px) rotate(-0.4deg); } to { opacity: 1; transform: none; } }
 .sheet .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; padding-bottom: 10px; border-bottom: 3px double var(--ink); }
@@ -433,7 +432,9 @@ kbd { font-family: var(--mono); font-size: 10.5px; font-weight: 600; border: 1px
 }
 .toast .label { color: var(--red); margin-right: 6px; }
 .toast.unlock { box-shadow: 4px 4px 0 var(--red); }
-@keyframes noteIn { from { transform: translateY(-8px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes noteIn { 0% { transform: translateY(-14px) scale(0.9); opacity: 0; } 60% { transform: translateY(2px) scale(1.02); opacity: 1; } 100% { transform: none; } }
+.toast.out { animation: noteOut 0.22s ease-in forwards; }
+@keyframes noteOut { to { transform: translateY(-10px) scale(0.96); opacity: 0; } }
 
 #tooltip { position: fixed; z-index: 40; max-width: 280px; pointer-events: none; padding: 9px 11px; font-size: 11.5px; line-height: 1.45; }
 #tooltip > * { position: relative; z-index: 1; }
@@ -448,7 +449,16 @@ kbd { font-family: var(--mono); font-size: 10.5px; font-weight: 600; border: 1px
 .banner .dimline::before, .banner .dimline::after { content: ''; flex: 1; height: 8px; border-top: 1.5px solid #fff; margin-top: 8px; }
 .banner .dimline::before { border-left: 1.5px solid #fff; }
 .banner .dimline::after { border-right: 1.5px solid #fff; }
-@keyframes banner { 0% { opacity: 0; transform: translate(-50%, -40%); } 14% { opacity: 1; transform: translate(-50%, -50%); } 78% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -56%); } }
+@keyframes banner {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
+  9% { opacity: 1; transform: translate(-50%, -50%) scale(1.07); }
+  15% { transform: translate(-50%, -50%) scale(0.98); }
+  20% { transform: translate(-50%, -50%) scale(1); }
+  78% { opacity: 1; transform: translate(-50%, -51%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -60%) scale(0.97); }
+}
+.banner .dimline::before, .banner .dimline::after { animation: rule 0.5s 0.15s cubic-bezier(0.2, 1, 0.3, 1) backwards; }
+@keyframes rule { from { transform: scaleX(0); } }
 
 /* ---------- small screens ---------- */
 @media (max-width: 760px) {
@@ -539,4 +549,68 @@ kbd { font-family: var(--mono); font-size: 10.5px; font-weight: 600; border: 1px
   .mapinfo .pick .ic { width: 40px; height: 40px; font-size: 19px; }
   .mapinfo .pick b { font-size: 21px; }
   .mapinfo .pick p { font-size: 13px; }
+}
+
+/* ================= motion =================
+   Nothing just appears: things arrive with a little overshoot, leave with a little anticipation,
+   and only what changed moves when a screen re-renders. */
+.sheet.enter { animation: sheetEnter 0.42s cubic-bezier(0.2, 1.25, 0.35, 1) backwards; }
+@keyframes sheetEnter { from { opacity: 0; transform: translateY(28px) rotate(-0.8deg) scale(0.98); } }
+.sheet .deal { animation: none; }
+.sheet.enter .deal { animation: dealIn 0.42s cubic-bezier(0.2, 1.35, 0.4, 1) backwards; animation-delay: calc(110ms + var(--i, 0) * 38ms); }
+@keyframes dealIn { from { opacity: 0; transform: translateY(16px) scale(0.94) rotate(-1.2deg); } }
+.sheet.enter .foot .stamp { animation: slam 0.5s cubic-bezier(0.3, 1.5, 0.5, 1) 0.3s backwards; }
+@keyframes slam { from { opacity: 0; transform: rotate(-9deg) scale(1.7); } }
+.sheet.enter .head h1 { animation: titleIn 0.45s cubic-bezier(0.2, 1.3, 0.4, 1) 0.05s backwards; }
+@keyframes titleIn { from { opacity: 0; transform: translateX(-14px); letter-spacing: 0.06em; } }
+.changed { animation: pop 0.34s cubic-bezier(0.3, 1.7, 0.5, 1); }
+@keyframes pop { from { transform: scale(0.93); } }
+
+.sheet-out { position: fixed; inset: 0; z-index: 9; pointer-events: none; }
+.sheet-out.dim { background: rgba(37, 32, 46, 0.42); animation: fadeOut 0.24s ease-in forwards; }
+.sheet.leave { animation: sheetLeave 0.24s cubic-bezier(0.5, 0, 0.75, 0) forwards; }
+@keyframes sheetLeave { 0% { transform: none; } 30% { transform: translateY(5px); opacity: 1; } 100% { transform: translateY(-36px) rotate(0.8deg) scale(0.97); opacity: 0; } }
+@keyframes fadeOut { to { opacity: 0; } }
+#overlay.dim { animation: fadeIn 0.25s ease-out; }
+@keyframes fadeIn { from { background: rgba(37, 32, 46, 0); } }
+
+/* the map is drawn bottom-up, one row at a time */
+.sheet.enter .map .node { animation: nodeIn 0.38s cubic-bezier(0.3, 1.6, 0.5, 1) backwards; animation-delay: calc(140ms + var(--i, 0) * 55ms); }
+.sheet.enter .map .node.can { animation: nodeIn 0.38s cubic-bezier(0.3, 1.6, 0.5, 1) backwards, nodeGlow 1.4s ease-in-out 0.9s infinite; animation-delay: calc(140ms + var(--i, 0) * 55ms), 0.9s; }
+@keyframes nodeIn { from { opacity: 0; transform: scale(0.3); } }
+.sheet.enter .map svg { animation: fadeInPlain 0.6s ease-out 0.1s backwards; }
+@keyframes fadeInPlain { from { opacity: 0; } }
+.map .node.here::after { content: ''; position: absolute; inset: -4px; border-radius: inherit; border: 2px solid var(--red); animation: ripple 1.6s ease-out infinite; pointer-events: none; }
+@keyframes ripple { from { transform: scale(1); opacity: 0.9; } to { transform: scale(1.7); opacity: 0; } }
+
+/* counting numbers get a bump in the direction they moved */
+[data-num] { display: inline-block; }
+.bump-up { animation: bumpUp 0.5s cubic-bezier(0.3, 1.6, 0.5, 1); }
+.bump-down { animation: bumpDown 0.45s ease-out; }
+@keyframes bumpUp { 0% { transform: scale(1.35) translateY(-2px); color: #e2a400; } 100% { transform: none; } }
+@keyframes bumpDown { 0%, 40% { color: var(--red); } 0% { transform: translateX(-3px); } 20% { transform: translateX(3px); } 40% { transform: translateX(-2px); } 60% { transform: none; } }
+
+/* the hand: dealt in from below, played cards fly up, the chosen card lifts */
+#hand .plate.deal { animation: handDeal 0.5s cubic-bezier(0.2, 1.3, 0.4, 1) backwards; animation-delay: calc(var(--i, 0) * 75ms + 120ms); }
+@keyframes handDeal { from { opacity: 0; transform: translateY(150%) rotate(9deg); } }
+#hand .plate.consumed { animation: consume 0.4s ease-out; }
+@keyframes consume { 0% { opacity: 1; transform: translateY(-14px); } 35% { opacity: 0.9; transform: translateY(-34px) scale(0.92); } 100% { opacity: 0.4; transform: none; } }
+#hand .plate.lift { animation: lift 0.32s cubic-bezier(0.3, 1.7, 0.5, 1); }
+@keyframes lift { from { transform: translateY(0); } }
+#hand .plate:not(.sel):not(.used):hover { transform: translateY(-5px); }
+
+/* HUD pieces arrive instead of popping on */
+#topbar { animation: dropDown 0.5s cubic-bezier(0.2, 1.3, 0.4, 1) 0.15s backwards; }
+@keyframes dropDown { from { opacity: 0; transform: translate(-50%, -30px); } }
+#threat { animation: slideRight 0.45s cubic-bezier(0.2, 1.3, 0.4, 1) 0.2s backwards; }
+@keyframes slideRight { from { opacity: 0; transform: translateX(-40px); } }
+#actions.fresh > * { animation: riseIn 0.4s cubic-bezier(0.2, 1.3, 0.4, 1) backwards; }
+@keyframes riseIn { from { opacity: 0; transform: translateY(16px); } }
+#tooltip:not(.hidden) { animation: tipIn 0.14s ease-out; }
+@keyframes tipIn { from { opacity: 0; transform: translateY(4px); } }
+#modal .box { animation: modalIn 0.32s cubic-bezier(0.2, 1.4, 0.4, 1); }
+@keyframes modalIn { from { opacity: 0; transform: scale(0.88) rotate(-1deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }

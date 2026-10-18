@@ -153,6 +153,8 @@ export function reactionOf(mat: MatId, touching: Set<MatId>): Reaction | null {
 
 /** Each block of the same material directly underneath a turret makes it this much stronger. */
 export const STACK_BONUS = 0.25;
+/** seconds a toppled tower takes to swing down (the renderer animates the same swing) */
+export const TOPPLE_SWING = 0.4;
 /** Damage per toppled block landing on an enemy, before the night's HP scaling. */
 export const TOPPLE_DMG = 5;
 
@@ -206,6 +208,8 @@ export class Night {
   private gustCd = 7;
   private stormCd = 5;
   private dominoes: { x: number; y: number; d: number; t: number; chain: number }[] = [];
+  /** toppled towers still swinging down; they crush when they land */
+  private impacts: { cells: { x: number; y: number; z: number; mat: MatId }[]; d: number; chain: number; t: number }[] = [];
   private bellCd = 2;
   private bells: { x: number; y: number; z: number }[] = [];
   private omens: { x: number; y: number }[] = [];
@@ -375,14 +379,22 @@ export class Night {
    * and what it is made of decides what else happens where it lands.
    */
   topple(x: number, y: number, d: number, chain = 0) {
+    const stack = this.board.col(x, y).filter((b): b is Block => !!b);
     const cells = this.board.topple(x, y, d);
+    // blocks that tip past the island's edge swing out and drop into the sky
+    this.r.tossBlocks(cells.flatMap((c, i) => (c.z < 0 && !this.board.inBounds(c.x, c.y) ? [{ id: stack[i].id, to: world(c.x, c.y, 0.5) }] : [])));
     this.hooks.boardChanged();
+    sfx.crumble();
+    // the tower takes a moment to swing down; the crush lands with it
+    this.impacts.push({ cells, d, chain, t: TOPPLE_SWING });
+  }
+
+  private landTopple(cells: { x: number; y: number; z: number; mat: MatId }[], d: number, chain: number) {
     // dominoes: the first tower it slams into (2+ blocks before impact) tips over too, a beat later
     const hit = cells.find(c => c.z >= 2);
-    if (hit && (chain < 3 || this.hooks.has('domino'))) this.dominoes.push({ x: hit.x, y: hit.y, d, t: 0.35, chain: chain + 1 });
+    if (hit && (chain < 3 || this.hooks.has('domino'))) this.dominoes.push({ x: hit.x, y: hit.y, d, t: 0.12, chain: chain + 1 });
     const base = TOPPLE_DMG * this.wave.hpScale * (this.hooks.has('gravity_well') ? 1.5 : 1) * (this.hooks.has('domino') ? 1 + 0.5 * chain : 1);
     const hs = this.wave.hpScale;
-    sfx.crumble();
     sfx.boom();
     this.r.shakeCam(0.2 + cells.length * 0.04);
     const ground = (cx: number, cy: number, r: number) =>
@@ -504,6 +516,7 @@ export class Night {
           if (second) { this.r.beam(this.enemyWorld(tgt), this.enemyWorld(second), 0xd7a0ff); this.damage(second, dmg * 0.7); }
         }
         sfx.beam();
+        this.r.kickBlock(tu.b.id, 2);
         tu.cd = TURRET.crystal.cd * tu.cdMult;
       } else if (tu.mat === 'ember') {
         const tgt = this.nearestTarget(tu.x, tu.y, tu.range, false);
@@ -516,6 +529,7 @@ export class Night {
           dmg: (TURRET.ember.dmg + (fs ? 1 : 0)) * tu.dmgMult * this.hooks.mods.ember, radius: TURRET.ember.splash * (fs ? 1.6 : 1) * (1 + 0.12 * tu.stack), smoke: tu.react === 'smoke',
         });
         sfx.shell();
+        this.r.kickBlock(tu.b.id, 3.5);
         tu.cd = TURRET.ember.cd * tu.cdMult;
       }
     }
@@ -528,9 +542,12 @@ export class Night {
       const p = s.from.clone().lerp(s.to, k);
       p.y += Math.sin(k * Math.PI) * (1.4 + s.from.distanceTo(s.to) * 0.15);
       s.mesh.position.copy(p);
+      s.mesh.rotation.x += dt * 12;
+      s.mesh.rotation.z += dt * 7;
       if (k >= 1) {
         this.r.remove(s.mesh);
         this.r.ring(s.to, s.radius, 0xff8a3a, 0.35);
+        this.r.puff(s.to, 3);
         sfx.boom();
         const gx = s.to.x + (N - 1) / 2, gy = s.to.z + (N - 1) / 2;
         for (const e of this.enemies) {
@@ -572,6 +589,9 @@ export class Night {
     }
 
     this.weather(dt);
+    for (const im of this.impacts) im.t -= dt;
+    for (const im of this.impacts.filter(im => im.t <= 0)) this.landTopple(im.cells, im.d, im.chain);
+    this.impacts = this.impacts.filter(im => im.t > 0);
     for (const dm of this.dominoes) dm.t -= dt;
     for (const dm of this.dominoes.filter(dm => dm.t <= 0)) {
       if (this.board.canTopple(dm.x, dm.y)) { this.hooks.chain(dm.chain + 1); this.r.floatText(world(dm.x, dm.y, this.board.height(dm.x, dm.y) + 1), `chain ×${dm.chain + 1}!`, '#fff0c0'); this.topple(dm.x, dm.y, dm.d, dm.chain); }

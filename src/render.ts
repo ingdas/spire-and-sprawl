@@ -3,8 +3,16 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Board } from './board';
 import { BiomeDef } from './biomes';
 import { CORE, ENEMIES, EnemyId, MATS, MatId, N, PALETTE } from './config';
+/** keep in step with sim.ts TOPPLE_SWING (render can't import sim without a cycle) */
+const TOPPLE_SWING = 0.4;
 
 const C = (N - 1) / 2;
+const UP = new THREE.Vector3(0, 1, 0);
+const clamp01 = (t: number) => Math.max(0, Math.min(1, t));
+/** overshoots a little, then settles (follow-through) */
+const easeOutBack = (t: number) => { const c = 1.7; const u = t - 1; return 1 + (c + 1) * u * u * u + c * u * u; };
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+const GRAVITY = 38;
 export const world = (x: number, y: number, z = 0) => new THREE.Vector3(x - C, z, y - C);
 
 function toonGradient() {
@@ -51,6 +59,7 @@ const GEO = {
   beam: new THREE.CylinderGeometry(0.045, 0.045, 1, 6),
   shell: new THREE.IcosahedronGeometry(0.13, 0),
   debris: new THREE.TetrahedronGeometry(0.12),
+  puff: new THREE.IcosahedronGeometry(0.2, 0),
   arrow: new THREE.ConeGeometry(0.45, 0.9, 3),
   anvil: new THREE.BoxGeometry(0.62, 0.2, 0.34),
   bell: new THREE.ConeGeometry(0.22, 0.32, 8, 1, true),
@@ -71,11 +80,28 @@ const ENEMY_GEO: Record<EnemyId, THREE.BufferGeometry> = {
   boss: new THREE.IcosahedronGeometry(ENEMIES.boss.size, 0),
 };
 
-interface BlockView { mesh: THREE.Mesh; mat: THREE.MeshToonMaterial; target: THREE.Vector3; emblem: THREE.Object3D | null; matId: MatId; x: number; y: number }
+/** A tower tipping over: each block swings around the base edge, so the whole tower turns as one. */
+interface Tip { pivot: THREE.Vector3; dir: THREE.Vector3; axis: THREE.Vector3; r0: number; r1: number; f0: number; f1: number; t: number; dur: number; to: THREE.Vector3 }
 
-interface Fx { obj: THREE.Object3D; life: number; max: number; vel?: THREE.Vector3; spin?: number; kind: 'debris' | 'fade' | 'ring' | 'float'; grow?: number }
+interface BlockView {
+  mesh: THREE.Mesh; mat: THREE.MeshToonMaterial; target: THREE.Vector3; emblem: THREE.Object3D | null; matId: MatId; x: number; y: number;
+  /** where the block really is; the mesh adds squash on top */
+  pos: THREE.Vector3; vy: number; delay: number; tip: Tip | null;
+  /** squash spring: + squashed, - stretched */
+  sq: number; sqv: number; flash: number; emblemAge: number;
+}
 
-export interface EnemyView { root: THREE.Group; body: THREE.Mesh; mat: THREE.MeshToonMaterial; hpBar: THREE.Group; hpFill: THREE.Mesh }
+/** A block on its way out: either popping in place or (toss) swinging off the edge and dropping away. */
+interface Dying { mesh: THREE.Mesh; mat: THREE.MeshToonMaterial; t: number; toss?: { pos: THREE.Vector3; tip: Tip | null; vy: number } }
+
+interface Fx { obj: THREE.Object3D; life: number; max: number; vel?: THREE.Vector3; spin?: number; kind: 'debris' | 'fade' | 'ring' | 'float' | 'puff'; grow?: number }
+
+export interface EnemyView {
+  root: THREE.Group; body: THREE.Mesh; mat: THREE.MeshToonMaterial; hpBar: THREE.Group; hpFill: THREE.Mesh; hpLag: THREE.Mesh;
+  gait: 'hop' | 'hover' | 'slither'; bornAt: number; lastT: number; lastHp: number; lag: number; punch: number;
+}
+
+interface DyingEnemy { v: EnemyView; color: number; t: number }
 
 export class Renderer {
   renderer: THREE.WebGLRenderer;
@@ -83,6 +109,13 @@ export class Renderer {
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   private blockViews = new Map<number, BlockView>();
+  private dying: Dying[] = [];
+  private tossing = new Map<number, THREE.Vector3>();
+  private dyingEnemies: DyingEnemy[] = [];
+  private ghostOffset = new THREE.Vector3();
+  private ghostAnchor: THREE.Vector3 | null = null;
+  private coreSq = 0;
+  private coreSqv = 0;
   private blockRoot = new THREE.Group();
   private ghostRoot = new THREE.Group();
   private ringRoot = new THREE.Group();
@@ -252,20 +285,26 @@ export class Renderer {
       if (!v) {
         const mat = toon(MATS[b.mat].color);
         const mesh = outlined(GEO.block, mat, 0.05);
-        mesh.position.copy(target).add(new THREE.Vector3(0, 4 + z * 0.15, 0));
+        // new blocks drop in from above; lower blocks of a piece lead, so it lands bottom-first
+        const pos = target.clone().add(new THREE.Vector3(0, 4.5, 0));
+        mesh.position.copy(pos);
+        mesh.visible = false;
         mesh.userData.blockId = b.id;
         mesh.userData.cell = { x, y };
         this.blockRoot.add(mesh);
-        v = { mesh, mat, target, emblem: null, matId: b.mat, x, y };
+        v = { mesh, mat, target, emblem: null, matId: b.mat, x, y, pos, vy: 0, delay: z * 0.035 + Math.random() * 0.04, tip: null, sq: 0, sqv: 0, flash: 0, emblemAge: 1 };
         this.blockViews.set(b.id, v);
+      } else if (Math.hypot(target.x - v.pos.x, target.z - v.pos.z) > 0.3 && !v.tip) {
+        v.tip = this.makeTip(v.pos, target);
       }
       v.target.copy(target);
+      if (v.tip) v.tip.to.copy(target);
       v.x = x; v.y = y;
       v.mesh.userData.cell = { x, y };
       const topOpen = !board.blockAt(x, y, z + 1);
       if (topOpen && !v.emblem) {
         v.emblem = this.makeEmblem(b.mat);
-        if (v.emblem) v.mesh.add(v.emblem);
+        if (v.emblem) { v.mesh.add(v.emblem); v.emblemAge = 0; v.emblem.scale.setScalar(0.001); }
       } else if (!topOpen && v.emblem) {
         v.mesh.remove(v.emblem);
         v.emblem = null;
@@ -273,11 +312,63 @@ export class Renderer {
     }
     for (const [id, v] of this.blockViews) {
       if (seen.has(id)) continue;
-      this.debris(v.mesh.position, MATS[v.matId].color, 7);
       this.blockRoot.remove(v.mesh);
-      v.mat.dispose();
+      v.mesh.visible = true;
+      this.scene.add(v.mesh);
+      const to = this.tossing.get(id);
+      this.tossing.delete(id);
+      if (to) this.dying.push({ mesh: v.mesh, mat: v.mat, t: 0, toss: { pos: v.pos, tip: this.makeTip(v.pos, to), vy: 0 } });
+      else {
+        // destroyed blocks swell for a beat, then burst (anticipation before the pop)
+        v.mesh.quaternion.identity();
+        this.dying.push({ mesh: v.mesh, mat: v.mat, t: 0 });
+      }
       this.blockViews.delete(id);
     }
+  }
+
+  /** Circular swing around the base edge between two resting spots (see Tip). */
+  private makeTip(from: THREE.Vector3, to: THREE.Vector3): Tip | null {
+    const dir = new THREE.Vector3(to.x - from.x, 0, to.z - from.z);
+    const D = dir.length();
+    if (D < 0.3) return null;
+    dir.divideScalar(D);
+    const hy = Math.min(from.y, to.y) - 0.5;
+    const a = from.y - hy, b = to.y - hy;
+    const sd = (D * D + b * b - a * a) / (2 * D);
+    const pivot = new THREE.Vector3(from.x, hy, from.z).addScaledVector(dir, sd);
+    const f0 = Math.atan2(a, -sd), f1 = Math.atan2(b, D - sd);
+    return {
+      pivot, dir, axis: new THREE.Vector3().crossVectors(UP, dir).normalize(),
+      r0: Math.hypot(sd, a), r1: Math.hypot(D - sd, b), f0, f1, t: 0, dur: TOPPLE_SWING, to: to.clone(),
+    };
+  }
+
+  /** Ease-in swing: tipping starts slow and accelerates, like a real fall. */
+  private swing(tp: Tip, p: THREE.Vector3, mesh: THREE.Object3D, dt: number) {
+    tp.t = Math.min(1, tp.t + dt / tp.dur);
+    const e = tp.t * tp.t;
+    const f = tp.f0 + (tp.f1 - tp.f0) * e, r = tp.r0 + (tp.r1 - tp.r0) * e;
+    p.copy(tp.pivot).addScaledVector(tp.dir, r * Math.cos(f)).addScaledVector(UP, r * Math.sin(f));
+    mesh.quaternion.setFromAxisAngle(tp.axis, tp.f0 - f);
+  }
+
+  /** A block hit the ground: squash, and kick up dust if it came in fast. */
+  private land(v: BlockView, speed: number) {
+    v.sqv += Math.min(9, 2 + speed * 0.45);
+    if (speed > 5) this.puff(v.pos.clone().setY(v.pos.y - 0.45), speed > 9 ? 4 : 2);
+    if (v.emblem) { v.emblemAge = 0; v.emblem.scale.setScalar(0.001); }
+  }
+
+  /** These blocks are about to leave the board by tipping off the edge: animate the fall instead of a pop. */
+  tossBlocks(list: { id: number; to: THREE.Vector3 }[]) {
+    for (const { id, to } of list) this.tossing.set(id, to);
+  }
+
+  /** Recoil a block (a turret firing). */
+  kickBlock(id: number, amount = 2.5) {
+    const v = this.blockViews.get(id);
+    if (v) v.sqv += amount;
   }
 
   /** Refresh per-block tint from HP and hit flashes. */
@@ -288,6 +379,8 @@ export class Renderer {
       if (!v) continue;
       const c = new THREE.Color(MATS[b.mat].color).lerp(dark, (1 - b.hp / b.maxHp) * 0.55);
       if (b.flash > 0) c.lerp(new THREE.Color(0xffffff), Math.min(1, b.flash * 6));
+      if (b.flash > v.flash + 0.01) v.sqv += 1.6;
+      v.flash = b.flash;
       v.mat.color.copy(c);
     }
   }
@@ -361,6 +454,14 @@ export class Renderer {
 
   setGhost(cells: { x: number; y: number; z: number; mat: MatId }[], ok: boolean) {
     this.ghostRoot.clear();
+    if (cells.length) {
+      const anchor = world(cells[0].x, cells[0].y, cells[0].z);
+      if (this.ghostAnchor) {
+        this.ghostOffset.add(this.ghostAnchor.sub(anchor));
+        if (this.ghostOffset.length() > 4) this.ghostOffset.set(0, 0, 0);
+      }
+      this.ghostAnchor = anchor;
+    }
     for (const c of cells) {
       const col = new THREE.Color(MATS[c.mat].color);
       if (!ok) col.lerp(new THREE.Color(PALETTE.ghostBad), 0.7);
@@ -378,14 +479,16 @@ export class Renderer {
     }
   }
 
-  clearGhost() { this.ghostRoot.clear(); }
+  clearGhost() { this.ghostRoot.clear(); this.ghostAnchor = null; this.ghostOffset.set(0, 0, 0); }
 
   setRanges(rings: { x: number; y: number; r: number; color: number }[]) {
     this.ringRoot.clear();
     for (const r of rings) {
       const m = new THREE.Mesh(GEO.rangeRing, new THREE.MeshBasicMaterial({ color: r.color, transparent: true, opacity: 0.85, depthWrite: false }));
       m.rotation.x = -Math.PI / 2;
-      m.scale.setScalar(r.r);
+      m.scale.setScalar(0.001);
+      m.userData.r = r.r;
+      m.userData.age = 0;
       m.position.copy(world(r.x, r.y, 0.03));
       const fill = new THREE.Mesh(GEO.disc, new THREE.MeshBasicMaterial({ color: r.color, transparent: true, opacity: 0.08, depthWrite: false }));
       m.add(fill);
@@ -405,6 +508,7 @@ export class Renderer {
       a.rotation.order = 'YXZ';
       a.rotation.y = [0, -Math.PI / 2, Math.PI, Math.PI / 2][s];
       a.userData.basePos = pos.clone();
+      a.userData.age = -s * 0.08;
       a.scale.setScalar(1.4);
       this.telegraphRoot.add(a);
       const strip = new THREE.Mesh(new THREE.PlaneGeometry(N, 0.6), new THREE.MeshBasicMaterial({ color: 0xff4d6d, transparent: true, opacity: 0.45, depthWrite: false }));
@@ -471,14 +575,20 @@ export class Renderer {
     const hpFill = new THREE.Mesh(new THREE.PlaneGeometry(w, 0.08), new THREE.MeshBasicMaterial({ color: 0xff5470, depthTest: false }));
     hpFill.geometry.translate(w / 2, 0, 0);
     hpFill.position.x = -w / 2;
-    hpFill.position.z = 0.001;
-    bg.renderOrder = 10; hpFill.renderOrder = 11;
-    hpBar.add(bg, hpFill);
+    hpFill.position.z = 0.002;
+    // the white chip trails behind the red bar, so you can see how big each hit was
+    const hpLag = new THREE.Mesh(hpFill.geometry, new THREE.MeshBasicMaterial({ color: 0xfff6e6, depthTest: false }));
+    hpLag.position.x = -w / 2;
+    hpLag.position.z = 0.001;
+    bg.renderOrder = 10; hpLag.renderOrder = 11; hpFill.renderOrder = 12;
+    hpBar.add(bg, hpLag, hpFill);
     hpBar.position.y = def.size + 0.45;
     hpBar.visible = false;
     root.add(hpBar);
+    root.scale.setScalar(0.001);
     this.scene.add(root);
-    return { root, body, mat, hpBar, hpFill };
+    const gait = type === 'flier' || type === 'bomber' || type === 'leviathan' || type === 'boss' ? 'hover' : type === 'wyrm' ? 'slither' : 'hop';
+    return { root, body, mat, hpBar, hpFill, hpLag, gait, bornAt: this.time, lastT: this.time, lastHp: 1, lag: 1, punch: 0 };
   }
 
   /** Elites are bigger and wear a spinning gold halo. */
@@ -495,7 +605,32 @@ export class Renderer {
   }
 
   updateEnemy(v: EnemyView, pos: THREE.Vector3, hpFrac: number, flash: number, slowed: boolean, color: number, t: number) {
+    const dt = this.time - v.lastT;
+    v.lastT = this.time;
     v.root.position.copy(pos);
+    // spawn: pop up out of the ground with a little overshoot
+    const grow = easeOutBack(clamp01((this.time - v.bornAt) / 0.4));
+    if (hpFrac < v.lastHp - 1e-4) v.punch = 1;
+    v.lastHp = hpFrac;
+    v.punch = Math.max(0, v.punch - dt * 7);
+    v.lag = Math.max(hpFrac, v.lag - dt * 0.7);
+    // walkers hop and squash on each footfall; fliers bob
+    let sy = 1, sxz = 1, lift = 0;
+    if (v.gait === 'hop') {
+      const h = Math.abs(Math.sin(t * 7));
+      const contact = (1 - h) * (1 - h);
+      lift = h * 0.13;
+      sy = 1 - 0.14 * contact; sxz = 1 + 0.07 * contact;
+    } else if (v.gait === 'hover') {
+      lift = Math.sin(t * 3) * 0.08;
+    } else {
+      sxz = 1 + Math.sin(t * 5) * 0.06; sy = 1 - Math.sin(t * 5) * 0.06;
+    }
+    sy *= 1 - 0.28 * v.punch; sxz *= 1 + 0.22 * v.punch;
+    const k = Math.max(0.001, grow);
+    v.root.scale.set(k * sxz, k * sy, k * sxz);
+    v.root.position.y += lift;
+    v.hpBar.scale.set(1 / Math.max(0.2, k * sxz), 1 / Math.max(0.2, k * sy), 1);
     v.body.rotation.y = t * 1.5;
     v.body.rotation.x = Math.sin(t * 2) * 0.2;
     for (const c of v.body.children) {
@@ -510,11 +645,12 @@ export class Renderer {
     v.mat.color.copy(col);
     v.hpBar.visible = hpFrac < 0.999;
     v.hpFill.scale.x = Math.max(0.001, hpFrac);
+    v.hpLag.scale.x = Math.max(0.001, v.lag);
     v.hpBar.quaternion.copy(this.camera.quaternion);
   }
 
   removeEnemy(v: EnemyView, color: number, burst = true) {
-    if (burst) this.debris(v.root.position, color, 9);
+    if (burst) { v.hpBar.visible = false; this.dyingEnemies.push({ v, color, t: 0 }); return; }
     this.scene.remove(v.root);
     v.mat.dispose();
   }
@@ -575,6 +711,19 @@ export class Renderer {
     }
   }
 
+  /** Soft dust clouds where something heavy lands. */
+  puff(pos: THREE.Vector3, count: number) {
+    for (let i = 0; i < count; i++) {
+      const m = new THREE.Mesh(GEO.puff, new THREE.MeshBasicMaterial({ color: 0xfff6e6, transparent: true, opacity: 0.8, depthWrite: false }));
+      const a = (i / count) * Math.PI * 2 + Math.random();
+      m.position.copy(pos).add(new THREE.Vector3(Math.cos(a) * 0.3, 0.05, Math.sin(a) * 0.3));
+      m.scale.set(1, 0.6, 1);
+      const vel = new THREE.Vector3(Math.cos(a) * 1.6, 0.5, Math.sin(a) * 1.6);
+      this.scene.add(m);
+      this.fxList.push({ obj: m, life: 0.5, max: 0.5, vel, kind: 'puff' });
+    }
+  }
+
   floatText(pos: THREE.Vector3, text: string, color: string) {
     const canvas = document.createElement('canvas');
     canvas.width = 128; canvas.height = 64;
@@ -588,14 +737,14 @@ export class Renderer {
     ctx.fillText(text, 64, 46);
     const tex = new THREE.CanvasTexture(canvas);
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
-    s.scale.set(1.2, 0.6, 1);
+    s.scale.set(0.001, 0.001, 1);
     s.position.copy(pos);
     s.renderOrder = 20;
     this.scene.add(s);
     this.fxList.push({ obj: s, life: 1.1, max: 1.1, kind: 'float' });
   }
 
-  coreHit() { this.coreFlash = 0.4; this.shake = 0.35; }
+  coreHit() { this.coreFlash = 0.4; this.shake = 0.35; this.coreSqv += 7; }
   shakeCam(a: number) { this.shake = Math.max(this.shake, a); }
 
   // ---------- frame ----------
@@ -603,12 +752,46 @@ export class Renderer {
   update(realDt: number, simDt: number) {
     this.time += realDt;
     const t = this.time;
+    // board motion runs on game time, so a 3x night still lands topples when the sim does
+    const dt = Math.min(simDt, 0.1);
     for (const v of this.blockViews.values()) {
-      const p = v.mesh.position;
-      p.x += (v.target.x - p.x) * Math.min(1, realDt * 14);
-      p.z += (v.target.z - p.z) * Math.min(1, realDt * 14);
-      if (p.y > v.target.y) p.y = Math.max(v.target.y, p.y - realDt * 16);
-      else p.y += (v.target.y - p.y) * Math.min(1, realDt * 14);
+      if (v.delay > 0) { v.delay -= dt; continue; }
+      v.mesh.visible = true;
+      const p = v.pos;
+      let stretch = 0;
+      if (v.tip) {
+        const tp = v.tip;
+        this.swing(tp, p, v.mesh, dt);
+        if (tp.t >= 1) {
+          p.copy(tp.to);
+          v.mesh.quaternion.identity();
+          v.tip = null;
+          v.vy = 0;
+          this.land(v, 10);
+        }
+      } else {
+        p.x += (v.target.x - p.x) * Math.min(1, dt * 14);
+        p.z += (v.target.z - p.z) * Math.min(1, dt * 14);
+        if (p.y > v.target.y + 1e-4) {
+          v.vy += GRAVITY * dt;
+          p.y -= v.vy * dt;
+          stretch = Math.min(0.22, v.vy * 0.014);
+          if (p.y <= v.target.y) { p.y = v.target.y; this.land(v, v.vy); v.vy = 0; stretch = 0; }
+        } else p.y += (v.target.y - p.y) * Math.min(1, dt * 14);
+      }
+      // squash spring (semi-implicit Euler stays stable at frame-rate dt)
+      for (let n = Math.ceil(dt / (1 / 60)), h = dt / n; n > 0; n--) {
+        v.sqv += (-380 * v.sq - 15 * v.sqv) * h;
+        v.sq = Math.max(-0.3, Math.min(0.35, v.sq + v.sqv * h));
+      }
+      const sy = (1 - v.sq * 0.8) * (1 + stretch), sxz = (1 + v.sq * 0.4) / Math.sqrt(1 + stretch);
+      v.mesh.scale.set(sxz, sy, sxz);
+      // squash about the block's base, not its middle, so it stays planted
+      v.mesh.position.set(p.x, p.y - (1 - sy) * 0.47, p.z);
+      if (v.emblem && v.emblemAge < 1) {
+        v.emblemAge += dt / 0.4;
+        v.emblem.scale.setScalar(Math.max(0.001, easeOutBack(clamp01(v.emblemAge))));
+      }
       if (v.emblem) {
         v.emblem.traverse(o => {
           if (o.userData.spin) o.rotation.y += realDt * o.userData.spin;
@@ -617,6 +800,59 @@ export class Renderer {
         });
       }
     }
+    for (let i = this.dying.length - 1; i >= 0; i--) {
+      const d = this.dying[i];
+      d.t += dt;
+      if (d.toss) {
+        // swing over the edge, then keep falling and tumbling until it is out of sight
+        const ts = d.toss;
+        if (ts.tip && ts.tip.t < 1) this.swing(ts.tip, ts.pos, d.mesh, dt);
+        else {
+          ts.vy += GRAVITY * dt;
+          ts.pos.y -= ts.vy * dt;
+          if (ts.tip) ts.pos.addScaledVector(ts.tip.dir, dt * 2.5);
+          d.mesh.rotateX(dt * 4);
+        }
+        d.mesh.position.copy(ts.pos);
+        if (ts.pos.y < -4) d.mesh.scale.setScalar(Math.max(0.001, 1 + (ts.pos.y + 4) / 3));
+        if (ts.pos.y < -7) { this.scene.remove(d.mesh); d.mat.dispose(); this.dying.splice(i, 1); }
+        continue;
+      }
+      if (d.t < 0.08) {
+        const k = d.t / 0.08;
+        d.mesh.scale.setScalar(1 + 0.16 * k);
+        d.mat.color.lerp(new THREE.Color(0xffffff), k * 0.5);
+      } else {
+        if (!d.mesh.userData.burst) { d.mesh.userData.burst = true; this.debris(d.mesh.position, d.mat.color.getHex(), 7); }
+        const k = clamp01((d.t - 0.08) / 0.12);
+        d.mesh.scale.setScalar(Math.max(0.001, 1.16 * (1 - k * k)));
+      }
+      if (d.t >= 0.2) { this.scene.remove(d.mesh); d.mat.dispose(); this.dying.splice(i, 1); }
+    }
+    for (let i = this.dyingEnemies.length - 1; i >= 0; i--) {
+      const d = this.dyingEnemies[i];
+      d.t += dt;
+      // a quick stretch upward (anticipation), then the burst
+      const k = clamp01(d.t / 0.1);
+      d.v.root.scale.set(1 - 0.3 * k, 1 + 0.45 * k, 1 - 0.3 * k);
+      d.v.mat.color.lerp(new THREE.Color(0xffffff), k * 0.6);
+      if (d.t >= 0.1) {
+        this.debris(d.v.root.position, d.color, 9);
+        this.ring(d.v.root.position.clone().setY(0.06), 0.7, d.color, 0.3);
+        this.scene.remove(d.v.root);
+        d.v.mat.dispose();
+        this.dyingEnemies.splice(i, 1);
+      }
+    }
+    this.ghostOffset.multiplyScalar(Math.exp(-dt * 20));
+    this.ghostRoot.position.copy(this.ghostOffset).add(new THREE.Vector3(0, Math.sin(t * 3) * 0.035, 0));
+    for (const m of this.ringRoot.children) {
+      m.userData.age += dt;
+      m.scale.setScalar(Math.max(0.001, m.userData.r * easeOutBack(clamp01(m.userData.age / 0.3))));
+    }
+    this.coreSqv += (-300 * this.coreSq - 12 * this.coreSqv) * dt;
+    this.coreSq = Math.max(-0.3, Math.min(0.4, this.coreSq + this.coreSqv * dt));
+    this.core.scale.set(1 + this.coreSq * 0.4, 1 - this.coreSq * 0.7, 1 + this.coreSq * 0.4);
     this.coreGem.rotation.y += realDt * 0.8;
     this.coreGem.position.y = 1.15 + Math.sin(t * 2) * 0.08;
     const halo = this.core.getObjectByName('halo')!;
@@ -635,7 +871,10 @@ export class Renderer {
       if (a.userData.strip) { ((a as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.3 + Math.sin(t * 4) * 0.15; continue; }
       const bp = a.userData.basePos as THREE.Vector3;
       const pulse = (Math.sin(t * 5) + 1) * 0.25;
+      a.userData.age += dt;
+      const drop = 1 - easeOutBack(clamp01(a.userData.age / 0.45));
       a.position.copy(bp).multiplyScalar(1 - pulse * 0.04);
+      a.position.y += drop * 3;
     }
 
     for (let i = this.fxList.length - 1; i >= 0; i--) {
@@ -654,8 +893,17 @@ export class Renderer {
         f.obj.scale.setScalar(0.1 + (1 - k) * f.obj.userData.radius);
         ((f.obj as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = k;
       } else if (f.kind === 'float') {
-        f.obj.position.y += realDt * 1.2;
-        (f.obj as THREE.Sprite).material.opacity = Math.min(1, k * 2);
+        // pops in with overshoot, then drifts up and slows down
+        const pop = Math.max(0.001, easeOutBack(clamp01((1 - k) * f.max / 0.22)));
+        f.obj.scale.set(1.2 * pop, 0.6 * pop, 1);
+        f.obj.position.y += realDt * 2.4 * k;
+        (f.obj as THREE.Sprite).material.opacity = Math.min(1, k * 2.5);
+      } else if (f.kind === 'puff' && f.vel) {
+        f.vel.multiplyScalar(Math.exp(-simDt * 5));
+        f.obj.position.addScaledVector(f.vel, simDt);
+        const g = 1 + easeOutCubic(1 - k) * 1.6;
+        f.obj.scale.set(g, g * 0.6, g);
+        ((f.obj as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.8 * k;
       }
       if (f.life <= 0) {
         this.scene.remove(f.obj);
@@ -705,6 +953,8 @@ export class Renderer {
   clearAll() {
     for (const v of this.blockViews.values()) { this.blockRoot.remove(v.mesh); v.mat.dispose(); }
     this.blockViews.clear();
+    for (const d of this.dying) { this.scene.remove(d.mesh); d.mat.dispose(); }
+    this.dying = [];
     this.clearGhost();
     this.ringRoot.clear();
     this.telegraphRoot.clear();

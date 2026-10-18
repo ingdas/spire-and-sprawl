@@ -101,6 +101,15 @@ export class Game {
   /** the dawn screen to return to from the bag view */
   private screen: () => void = () => {};
   private mapSel = -1;
+  /** last shown value per [data-num] key, so changes count up instead of snapping */
+  private nums = new Map<string, number>();
+  /** bumps whenever a fresh hand is drawn, so the cards are dealt in once */
+  private handDeal = 0;
+  private handShown = -1;
+  private handUsed: boolean[] = [];
+  private handSel = -1;
+  private actionsPhase = '';
+  private actionsFresh = 0;
   private last = performance.now();
 
   constructor() {
@@ -304,6 +313,7 @@ export class Game {
 
   startRun(founder: FounderId) {
     sfx.click();
+    this.nums.clear();
     this.r.clearAll();
     const meta = this.meta;
     const hot = meta.heat >= 2 ? 3 : 0;
@@ -386,6 +396,7 @@ export class Game {
       if (p && !run.hand.includes(p)) run.hand.push(p);
     }
     run.used = run.hand.map(() => false);
+    this.handDeal++;
   }
 
   private beginNight() {
@@ -851,7 +862,7 @@ export class Game {
 
   private purse() {
     const run = this.run!;
-    return `<div class="bigstat"><span class="label">Core</span><b>${Math.ceil(run.coreHp)}/${run.coreMax}</b></div><div class="bigstat gold"><span class="label">Gold</span><b>${run.gold}</b></div>`;
+    return `<div class="bigstat"><span class="label">Core</span><b><span data-num="pcore">${Math.ceil(run.coreHp)}</span>/${run.coreMax}</b></div><div class="bigstat gold"><span class="label">Gold</span><b><span data-num="pgold">${run.gold}</span></b></div>`;
   }
 
   private nodeInfo(n: MapNode): { icon: string; name: string; desc: string } {
@@ -897,7 +908,7 @@ export class Game {
       const cls = [n.kind === 'battle' || n.kind === 'guardian' ? 'fight' : 'stop', `k-${n.kind}`, can ? 'can' : '', m.visited.includes(n.id) ? 'done' : '', m.at === n.id ? 'here' : '', this.mapSel === n.id ? 'sel' : ''].join(' ');
       const tag = n.night ? `<span class="nt">${n.night}</span>` : '';
       const wx = n.weather ? `<span class="wx">${WEATHER[n.weather].icon}</span>` : '';
-      return `<button class="node ${cls}" style="left:${X(n.lane)}%; top:${Y(n.row)}%" data-act="n${n.id}" aria-label="${info.name}"><span class="ic">${info.icon}</span>${tag}${wx}</button>`;
+      return `<button class="node ${cls}" style="left:${X(n.lane)}%; top:${Y(n.row)}%; --i:${n.row}" data-act="n${n.id}" aria-label="${info.name}"><span class="ic">${info.icon}</span>${tag}${wx}</button>`;
     }).join('');
     const nextBiome = run.route[run.act + 1];
     const info = sel ? this.nodeInfo(sel) : null;
@@ -1205,10 +1216,11 @@ export class Game {
     const ticks = Array.from({ length: run.coreMax }, (_, i) => `<i class="${i < Math.ceil(run.coreHp) ? '' : 'off'}"></i>`).join('');
     $('topbar').innerHTML = `
       <div class="cell phase"><span class="label">${this.biome.name} · ${run.day}/${NIGHTS}</span><span class="v">${phase}</span></div>
-      <div class="cell ${low ? 'low' : ''}" data-tip="<b>Core HP</b><br>If it reaches 0, you lose."><span class="label">Core HP</span><span class="v">${Math.ceil(run.coreHp)}<small>/${run.coreMax}</small></span><div class="hpbar">${ticks}</div></div>
-      <div class="cell" data-tip="<b>Gold</b><br>Earned every morning, more with gardens on the ground."><span class="label">Gold</span><span class="v gold">${run.gold}</span></div>
+      <div class="cell ${low ? 'low' : ''}" data-tip="<b>Core HP</b><br>If it reaches 0, you lose."><span class="label">Core HP</span><span class="v"><span data-num="thp">${Math.ceil(run.coreHp)}</span><small>/${run.coreMax}</small></span><div class="hpbar">${ticks}</div></div>
+      <div class="cell" data-tip="<b>Gold</b><br>Earned every morning, more with gardens on the ground."><span class="label">Gold</span><span class="v gold"><span data-num="tgold">${run.gold}</span></span></div>
       <div class="cell stat" data-tip="<b>Tallest tower</b><br>Height makes turrets shoot further, but attracts sappers."><span class="label">Tallest</span><span class="v">${st.tallest}</span></div>
       <div class="cell stat" data-tip="<b>Area</b><br>Ground you have built on. Width earns gold, but attracts brutes."><span class="label">Area</span><span class="v">${st.footprint}</span></div>`;
+    this.animateNumbers($('topbar'));
   }
 
   private renderThreat() {
@@ -1258,7 +1270,17 @@ export class Game {
       no: `${i + 1}`, taken: i === run.keptIdx ? 'Kept' : undefined, extraCls: `${i === this.sel ? 'sel' : ''} ${run.used[i] ? 'used' : ''}`, attrs: `data-card="${i}"`,
     })).join('');
     flushDrawings(el);
-    el.querySelectorAll<HTMLElement>('[data-card]').forEach(c => (c.onclick = () => this.selectCard(+c.dataset.card!)));
+    const cards = [...el.querySelectorAll<HTMLElement>('[data-card]')];
+    const dealing = this.phase === 'day' && this.handShown !== this.handDeal;
+    cards.forEach((c, i) => {
+      if (dealing) { c.classList.add('deal'); c.style.setProperty('--i', `${i}`); }
+      else if (run.used[i] && !this.handUsed[i]) c.classList.add('consumed');
+      else if (i === this.sel && this.handSel !== i) c.classList.add('lift');
+      c.onclick = () => this.selectCard(i);
+    });
+    if (this.phase === 'day') this.handShown = this.handDeal;
+    this.handUsed = [...run.used];
+    this.handSel = this.sel;
   }
 
   private renderActions() {
@@ -1272,6 +1294,10 @@ export class Game {
       el.innerHTML = `<span class="left topples${run.topples ? '' : ' spent'}">⤵ Topples left: <b>${run.topples}</b></span>
         <div class="tabs">${tab(`Drop stone · ${DROP_COST}g`, 'drop', { disabled: run.gold < DROP_COST, red: this.dropping, tip: 'Drop a stone block on the enemies (D)' })}${run.topples ? tab('Turn ↻', 'turn', { disabled: !this.ghostKey, tip: 'Change which way the tower falls (R)' }) : ''}${tab(`Aim: ${AIMS[this.aim]}`, 'aim', { tip: 'What turrets shoot first: closest to the core, the strongest enemy, or fliers (A)' })}${tab(`Speed ${this.speed}×`, 'speed', { tip: 'Night speed (F)' })}</div>`;
     } else el.innerHTML = '';
+    // the controls rise in when the phase changes, not on every refresh
+    if (this.actionsPhase !== this.phase) this.actionsFresh = performance.now() + 450;
+    el.classList.toggle('fresh', performance.now() < this.actionsFresh);
+    this.actionsPhase = this.phase;
     el.querySelectorAll<HTMLElement>('[data-act]').forEach(b => (b.onclick = () => {
       const a = b.dataset.act;
       if (a === 'night') this.beginNight();
@@ -1302,6 +1328,7 @@ export class Game {
     }
     run.hand = [...keep, ...fresh];
     run.used = run.hand.map((_, i) => i < keep.length);
+    this.handDeal++;
     this.sel = -1;
     sfx.rotate();
     this.renderHud();
@@ -1538,10 +1565,38 @@ export class Game {
     };
   }
 
+  /**
+   * Show a sheet. A new screen slides in and deals its contents; re-rendering the same screen
+   * (after buying something, say) stays put and only pops what changed.
+   */
   private overlay(html: string, dim = false, acts: Record<string, () => void> = {}) {
     const el = $('overlay');
     if (html) document.querySelectorAll('.banner').forEach(b => b.remove());
+    const old = el.querySelector<HTMLElement>('.sheet');
+    const key = (h: ParentNode | null) => h?.querySelector('h1')?.textContent ?? '';
+    const probe = document.createElement('div');
+    probe.innerHTML = html;
+    const same = !!html && !!old && key(old) === key(probe);
+    const before = new Map<string, string>();
+    if (same) el.querySelectorAll<HTMLElement>('[data-act]').forEach(n => before.set(n.dataset.act!, n.outerHTML));
+    const scroll = el.scrollTop, sheetScroll = old?.scrollTop ?? 0;
+    if (old && !same) this.sheetOut(old, el.classList.contains('dim') && !html);
     el.innerHTML = html;
+    const sheetEl = el.querySelector<HTMLElement>('.sheet');
+    if (sheetEl && same) {
+      sheetEl.classList.add('static');
+      el.scrollTop = scroll;
+      sheetEl.scrollTop = sheetScroll;
+      el.querySelectorAll<HTMLElement>('[data-act]').forEach(n => { const was = before.get(n.dataset.act!); if (was !== undefined && was !== n.outerHTML) n.classList.add('changed'); });
+    } else if (sheetEl) {
+      sheetEl.classList.add('enter');
+      let i = 0;
+      sheetEl.querySelectorAll<HTMLElement>('.plate, .detail, .contract, .up, .cx, .order, .ledger .ln, .brule, .manual .item, .toc button, .event, .mapinfo .pick, .bigstat').forEach(n => {
+        n.classList.add('deal');
+        n.style.setProperty('--i', `${Math.min(i++, 12)}`);
+      });
+    }
+    if (html) this.animateNumbers(el);
     el.classList.toggle('dim', dim && !!html);
     document.body.classList.toggle('sheet-open', dim && !!html);
     $('tooltip').classList.add('hidden');
@@ -1551,13 +1606,46 @@ export class Game {
     };
   }
 
+  /** The old sheet lifts off the table and fades while the new one comes in. */
+  private sheetOut(old: HTMLElement, fadeDim: boolean) {
+    const r = old.getBoundingClientRect();
+    const wrap = document.createElement('div');
+    wrap.className = 'sheet-out' + (fadeDim ? ' dim' : '');
+    Object.assign(old.style, { position: 'absolute', left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, margin: '0' });
+    old.classList.remove('enter', 'static');
+    old.classList.add('leave');
+    wrap.appendChild(old);
+    document.body.appendChild(wrap);
+    setTimeout(() => wrap.remove(), 260);
+  }
+
+  /** Numbers that changed since they were last shown count up or down and give a little bump. */
+  private animateNumbers(root: ParentNode) {
+    root.querySelectorAll<HTMLElement>('[data-num]').forEach(el => {
+      const k = el.dataset.num!, to = Number(el.textContent);
+      const from = this.nums.get(k);
+      this.nums.set(k, to);
+      if (from === undefined || from === to || Number.isNaN(to)) return;
+      el.classList.add(to > from ? 'bump-up' : 'bump-down');
+      const t0 = performance.now(), dur = Math.min(650, 220 + Math.abs(to - from) * 35);
+      el.textContent = `${from}`;
+      const step = (now: number) => {
+        if (!el.isConnected) return;
+        const e = 1 - Math.pow(1 - Math.min(1, (now - t0) / dur), 3);
+        el.textContent = `${Math.round(from + (to - from) * e)}`;
+        if (e < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
   private toast(msg: string, unlock = false) {
     const t = document.createElement('div');
     t.className = 'paper toast' + (unlock ? ' unlock' : '');
     t.innerHTML = `<span class="label">${unlock ? '★' : '▸'}</span>`;
     t.append(msg);
     $('toasts').appendChild(t);
-    setTimeout(() => t.remove(), unlock ? 4500 : 2200);
+    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 220); }, unlock ? 4500 : 2200);
   }
 
   private banner(kicker: string, title: string, sub = '') {
