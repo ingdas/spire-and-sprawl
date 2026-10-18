@@ -1,0 +1,6 @@
+{
+  "name": "smoke",
+  "runs": 10,
+  "metas": ["mid"],
+  "workers": 8
+}

@@ -9,7 +9,10 @@ npm install
 npm run dev      # http://localhost:5173
 npm run build    # static HTML5 export in dist/
 npm run preview  # serve the built export
+npm run bench -- tools/bench/experiments/baseline.json   # balance bench, see tools/bench/README.md
 ```
+
+**Balancing:** the bench plays about 8 runs a second, headless and seeded. Balance numbers live in `src/tune.ts`, and experiment files can override them per variant without a rebuild. See `tools/bench/README.md`.
 
 **Performance mode:** add `?perf` to the URL, or turn it on in Settings and reload. It switches to low resolution with no shadows or effects, and redraws about 4 times a second. The night-speed button also gets 1× / 3× / 10× / 30× steps. Use it for balancing runs (`?debug&perf` exposes `window.game` to scripts) or on weak machines. A small badge in the corner shows when it's on.
 
@@ -70,6 +73,7 @@ Weather (fog, thunderstorm, full moon) can roll on any non-guardian night.
 | Basic | Crystal | Beam turret; can hit fliers when raised |
 | Basic | Ember | Splash turret |
 | Basic | Ward | Slows enemies |
+| Basic | Arc | Chain lightning: jumps between up to 3 nearby enemies, fliers too. Short range, so it suits low walls |
 | Basic | Beacon | Damage buff |
 | Basic | Rock | Terrain |
 | Unique | Anvil | Crushes harder when it falls |
@@ -86,6 +90,8 @@ Weather (fog, thunderstorm, full moon) can roll on any non-guardian night.
 | Crystal + ward | Frost beams |
 | Crystal + ember | Spark beams |
 | Ember + garden | Smoke shells |
+| Arc + ward | Static: zaps stun for a moment |
+| Arc + stone | Grounded: 2 more jumps |
 
 **Topple landings** depend on the material: ember splashes fire, crystal shatters, ward leaves a slow field, garden drops gold.
 
@@ -129,22 +135,24 @@ Nothing just appears.
 
   | Heat | Rule |
   |---|---|
-  | 1 | Enemies have +20% HP |
+  | 1 | Enemies have +15% HP |
   | 2 | Start with 3 less gold and 3 less core HP |
-  | 3 | Elites from night 2, twice as often |
-  | 4 | Act guardians have +50% HP |
+  | 3 | Elites from night 2, three times as often |
+  | 4 | Act guardians have double HP |
   | 5 | Treasure spots become events |
   | 6 | Shops, relics and the premium shelf cost 25% more |
-  | 7 | Enemies chew 25% faster |
-  | 8 | One topple fewer each night |
-  | 9 | Journeys cut towers above 8 high (not 10) |
+  | 7 | Enemies move 15% faster |
+  | 8 | Every night brings 5% more enemies |
+  | 9 | Fliers come from the first night, and 50% more often |
   | 10 | The final boss gets back up once with half HP |
 
 ## Code map
 
 | File | What it holds |
 |---|---|
-| `src/config.ts` | Tuning: materials, unique blocks, turrets, enemies, guardians |
+| `src/config.ts` | Materials, unique blocks, turrets, enemies, guardians |
+| `src/tune.ts` | Balance knobs (waves, tower damage, economy, heat), overridable live for the bench |
+| `src/rng.ts` | Game dice: seedable, plus `peek()` for previews that must not move the dice |
 | `src/biomes.ts` | Biomes, route, act helpers |
 | `src/map.ts` | Act map generation: rows, lanes, stops, night types |
 | `src/pieces.ts` | Polycube shapes, generation, founders, card drawings |
@@ -155,5 +163,6 @@ Nothing just appears.
 | `src/ui.ts` | Paper UI components |
 | `src/game.ts` | State machine, HUD, screens, input |
 | `src/audio.ts` | WebAudio synth sound effects |
+| `tools/bench/` | Balance bench: headless bot, experiments, summaries |
 
 See `BACKLOG.md` for the 30-item gameplay backlog and its status.

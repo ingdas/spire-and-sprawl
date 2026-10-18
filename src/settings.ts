@@ -17,3 +17,9 @@ export function saveSettings(s: Settings) {
  * Meant for balancing runs and weak machines. On with ?perf in the URL or the setting (after a reload).
  */
 export const PERF = location.search.includes('perf') || loadSettings().perf;
+
+/**
+ * Headless mode for the balance bench (?bench): no sound, no HUD, hints or toasts. Only the game
+ * logic and the overlay sheets (which the bot clicks through) still run.
+ */
+export const HEADLESS = location.search.includes('bench');

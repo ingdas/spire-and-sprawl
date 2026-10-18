@@ -1,4 +1,5 @@
 import { ContractId, WeatherId } from './sim';
+import { rand } from './rng';
 
 /** Every act is a small branching map. Battles are nights; the stops between them each do one thing. */
 export type StopKind = 'shop' | 'camp' | 'forge' | 'event' | 'treasure' | 'unique';
@@ -34,21 +35,21 @@ export const GUARDIAN_INFO = { icon: '♛', name: 'Boss night' };
 const LAYOUT = ['B', 'S', 'B', 'S', 'B', 'S', 'S', 'G'] as const;
 const LANES = 3;
 
-const pick = <T>(a: readonly T[]) => a[Math.floor(Math.random() * a.length)];
-const shuffle = <T>(a: T[]) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const pick = <T>(a: readonly T[]) => a[Math.floor(rand() * a.length)];
+const shuffle = <T>(a: T[]) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
 const STOP_WEIGHTS: [StopKind, number][] = [['shop', 4], ['camp', 3], ['forge', 2], ['event', 2], ['treasure', 1.5], ['unique', 1.5]];
 const CONTRACT_POOL: ContractId[] = ['standard', 'calm', 'bounty', 'skyward', 'siege'];
 
 function weighted(exclude: StopKind[]): StopKind {
   const pool = STOP_WEIGHTS.filter(([k]) => !exclude.includes(k));
-  let r = Math.random() * pool.reduce((s, [, w]) => s + w, 0);
+  let r = rand() * pool.reduce((s, [, w]) => s + w, 0);
   for (const [k, w] of pool) if ((r -= w) <= 0) return k;
   return pool[0][0];
 }
 
 export function rollWeather(night: number, guardian: boolean): WeatherId | null {
-  return night >= 2 && !guardian && Math.random() < 0.35 ? pick(['fog', 'storm', 'moon'] as WeatherId[]) : null;
+  return night >= 2 && !guardian && rand() < 0.35 ? pick(['fog', 'storm', 'moon'] as WeatherId[]) : null;
 }
 
 export function makeMap(act: number, opts: { treasure: boolean }): ActMap {
@@ -96,7 +97,7 @@ export function makeMap(act: number, opts: { treasure: boolean }): ActMap {
   // act 3 trades the pre-boss rest for two shops (spend everything before the end)
   if (act >= 1) for (const r of rows) {
     if (r.length < 3 || r[0].kind !== 'battle') continue;
-    if (!r.some(n => n.contract === 'siege' || n.contract === 'skyward')) pick(r.filter(n => n.contract !== 'standard')).contract = Math.random() < 0.5 ? 'siege' : 'skyward';
+    if (!r.some(n => n.contract === 'siege' || n.contract === 'skyward')) pick(r.filter(n => n.contract !== 'standard')).contract = rand() < 0.5 ? 'siege' : 'skyward';
   }
   if (act === 2) {
     const pre = rows[LAYOUT.length - 2];
@@ -110,7 +111,7 @@ export function makeMap(act: number, opts: { treasure: boolean }): ActMap {
     if (a.length === 1 || b.length === 1) { for (const n of a) n.next = b.map(m => m.id); continue; }
     for (let l = 0; l < LANES; l++) a[l].next.push(b[l].id);
     for (let l = 0; l < LANES - 1; l++) {
-      const roll = Math.random();
+      const roll = rand();
       if (roll < 0.35) a[l].next.push(b[l + 1].id);
       else if (roll < 0.7) a[l + 1].next.push(b[l].id);
     }

@@ -1,0 +1,13 @@
+{
+  "name": "styles",
+  "runs": 40,
+  "metas": ["none", "mid"],
+  "workers": 8,
+  "variants": {
+    "base": {},
+    "aa2": { "highAAMult": 2.0 },
+    "aa2-flier": { "highAAMult": 2.0, "flierPerCell": 0.07 },
+    "aa2-garden": { "highAAMult": 2.0, "gardenGold": 1.7 },
+    "aa2-both": { "highAAMult": 2.0, "flierPerCell": 0.07, "gardenGold": 1.7 }
+  }
+}

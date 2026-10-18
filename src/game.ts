@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { isMuted, music, setMuted, setVolumes, sfx } from './audio';
-import { PERF, Settings, loadSettings, saveSettings } from './settings';
+import { HEADLESS, PERF, Settings, loadSettings, saveSettings } from './settings';
 import { Board, Placement } from './board';
-import { CORE, ENEMIES, applyColorBlind, EnemyId, HAND_SIZE, MATS, MatId, N, NIGHTS, START_CORE_HP, START_GOLD, UNIQUES } from './config';
+import { CORE, ENEMIES, applyColorBlind, EnemyId, HAND_SIZE, MATS, MatId, N, NIGHTS, UNIQUES } from './config';
+import { TUNE } from './tune';
 import { CODEX, CodexDef, HEATS, HEAT_COLORS, Meta, RelicId, RunStats, SEALS, UPGRADES, relicDef } from './meta';
 import { FOUNDERS, FounderId, Piece, make, pivotOf, randomPiece, rotatePiece, uniquePiece } from './pieces';
 import { Renderer, world } from './render';
@@ -10,6 +11,7 @@ import { AIMS, Aim, CONTRACTS, REACTIONS as COMBOS, ContractId, FOUNDATION_RANGE
 import { BIOMES, BiomeDef, BiomeId, actOf, randomCells, rollRoute } from './biomes';
 import { ActMap, DANGER, GUARDIAN_INFO, MapNode, STOPS, StopKind, ahead, makeMap, reachable } from './map';
 import { badge, blankPlate, callout, compass, detail, enemyGlyph, flushDrawings, impression, ledgerLine, plate, sec, sheet, stamp, tab } from './ui';
+import { peek, rand, rolls, seedRandom } from './rng';
 
 type Phase = 'title' | 'day' | 'night' | 'dawn' | 'end';
 
@@ -89,18 +91,16 @@ function heatBadge(level: number, label = 'Heat') {
 }
 const DEMOLISH_PER_DAY = 2;
 const DEMOLISH_COST = 3;
-const CAMP_HEAL = 6;
 const CAMP_GOLD = 6;
 const DROP_COST = 3;
 const RUN_KEY = 'spire-sprawl-run';
 /** a night's extra actions */
 const RALLY_SECONDS = 5;
 /** a bonus topple every this many kills in one night */
-const KILLS_PER_TOPPLE = 15;
 const INTEREST_CAP = 4;
 const GILD_HP = 1.5;
 const $ = (id: string) => document.getElementById(id)!;
-const shuffle = <T>(a: T[]) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const shuffle = <T>(a: T[]) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
 export class Game {
   r: Renderer;
@@ -163,6 +163,12 @@ export class Game {
     this.showTitle();
     requestAnimationFrame(t => this.frame(t));
   }
+
+  /** balance knobs (debug: bots change them live) */
+  readonly tune = TUNE;
+  /** debug: seed the game dice so a run replays exactly (null = back to Math.random) */
+  readonly seedRandom = seedRandom;
+  readonly rolls = rolls;
 
   get has() { return (id: RelicId) => !!this.run?.relics.includes(id); }
 
@@ -231,8 +237,8 @@ export class Game {
     const pool = this.meta.matPool();
     for (let i = 0, placed = 0; i < 400 && placed < 26; i++) {
       const p = randomPiece(pool);
-      const blocks = rotatePiece(p.blocks, Math.floor(Math.random() * 4));
-      const pl = b.evaluate(blocks, Math.floor(Math.random() * 13) - 1, Math.floor(Math.random() * 13) - 1);
+      const blocks = rotatePiece(p.blocks, Math.floor(rand() * 4));
+      const pl = b.evaluate(blocks, Math.floor(rand() * 13) - 1, Math.floor(rand() * 13) - 1);
       if (pl.ok) { b.place(pl, () => 1); placed++; }
     }
     this.r.syncBoard(b);
@@ -345,7 +351,7 @@ export class Game {
       body: `<div class="manual">
         ${item('1', 'Build by day', `You get ${HAND_SIZE} pieces each day. A piece lands on top of whatever is below it, so you can build <b>up</b> or <b>out</b>. Pieces must touch your buildings or the core. You can <b>keep</b> one piece for tomorrow and <b>demolish</b> 2 blocks a day.`)}
         ${item('2', 'Survive the night', 'Enemies come from the <b class="red">red</b> sides. They chew through the <b>bottom</b> block of a column to reach the core.')}
-        ${item('3', 'Tall towers', 'Turrets shoot further the higher they are, and crystals 3 or more blocks up hit fliers much harder. Stack the same material to make it stronger: three crystals on top of each other hit harder than one. A turret standing on stone (or rock) shoots 1 cell further.')}
+        ${item('3', 'Tall towers', 'Turrets shoot further the higher they are, and crystals 3 or more blocks up hit fliers much harder. <b>Arcs</b> are the exception: short range, but their lightning jumps between packed enemies (fliers too), so they shine low down near your walls. Stack the same material to make it stronger: three crystals on top of each other hit harder than one. A turret standing on stone (or rock) shoots 1 cell further.')}
         ${item('4', 'Topple!', 'At night, click a tower to knock it over. Every block that lands on an enemy crushes it, and the tower becomes a wall. What it is made of matters: ember splashes fire, crystal shatters into shards, ward leaves a slow field, garden drops gold. You get one topple per night.')}
         ${item('5', 'Combos', `A turret touching a certain block (side, above or below) gets a twist, and a small star shows on it: ${Object.values(COMBOS).map(c => `${MATS[c.turret].name.toLowerCase()} + ${MATS[c.with].name.toLowerCase()} = <b>${c.name}</b>`).join(', ')}. Hover a tower in the day to see what it does.`)}
         ${item('6', 'Gold tips', 'Starting the night with pieces still in hand pays +1 gold each. In the day you can buy an extra piece or an extra demolish. At night an emergency stone costs gold (more each time). Shops have a premium shelf for big savers, and the Treasury Vault relic pays interest.')}
@@ -368,13 +374,14 @@ export class Game {
   startRun(founder: FounderId) {
     sfx.click();
     this.nums.clear();
+    this.mapSel = -1;
     this.r.clearAll();
     const meta = this.meta;
     const hot = meta.heat >= 2 ? 3 : 0;
-    const coreMax = START_CORE_HP + (meta.has('untouched') ? 3 : 0) + 3 * meta.rank('foundations') - hot;
+    const coreMax = TUNE.startCoreHp + (meta.has('untouched') ? 3 : 0) + 3 * meta.rank('foundations') - hot;
     this.run = {
       board: new Board(), founder, bag: FOUNDERS[founder].bag(), draw: [], hand: [], used: [],
-      gold: Math.max(0, START_GOLD + 2 * meta.rank('treasury') - hot), coreHp: coreMax, coreMax, day: 1, relics: [],
+      gold: Math.max(0, TUNE.startGold + 2 * meta.rank('treasury') - hot), coreHp: coreMax, coreMax, day: 1, relics: [],
       stats: { nights: 0, maxTallest: 0, maxHollows: 0, fallKills: 0, kills: 0, placedMats: new Set(), coreDamaged: false, finalFootprint: 0, finalMats: new Set(), won: false, maxChain: 1, calderaNights: 0, maxUniques: 0 },
       route: rollRoute(), act: 0, heat: meta.heat, coreLevel: 0, vents: [], wave: makeWave(1), handSize: HAND_SIZE + (meta.has('grand_architect') ? 1 : 0),
       draft: [], draftPick: -1, treasure: [], treasurePick: -1, platesEarned: 0, redraws: 0, demolishes: 0, keep: null, keptIdx: -1, topples: 0, keystone: meta.rank('keystone') > 0, shop: [], shopSold: [], market: [], marketSold: [], income: [], contract: 'standard', event: null, eventDone: '', map: makeMap(0, { treasure: meta.heat < 5 }), hurt: {}, hurtByNight: {}, undo: [], drops: 0, rallies: 0, shoreups: 0, killsTonight: 0, buys: 0, premium: null, premiumSold: false, temper: {},
@@ -501,10 +508,10 @@ export class Game {
     this.flying = false;
     run.act = actOf(run.day);
     const b = this.biome;
-    const lost = run.board.journeyDamage(run.heat >= 9 ? JOURNEY_MAX_H - 2 : JOURNEY_MAX_H);
+    const lost = run.board.journeyDamage(JOURNEY_MAX_H);
     // the new landscape
     run.vents = [];
-    for (const c of randomCells(b.outcrops, 3, (x, y) => run.board.height(x, y) > 0)) run.board.addTerrain(c.x, c.y, 1 + Math.floor(Math.random() * 2), 'rock', MATS.rock.hp);
+    for (const c of randomCells(b.outcrops, 3, (x, y) => run.board.height(x, y) > 0)) run.board.addTerrain(c.x, c.y, 1 + Math.floor(rand() * 2), 'rock', MATS.rock.hp);
     run.vents = randomCells(b.vents, 3, (x, y) => run.board.height(x, y) > 0);
     this.rehp();
     this.r.setBiome(b);
@@ -588,7 +595,7 @@ export class Game {
     this.nightTip = '';
     this.r.setPaths([]);
     this.r.setValid([]);
-    run.topples = (run.heat >= 8 ? 0 : 1) + this.meta.rank('leverage') + (CONTRACTS[run.contract].topple ?? 0) + (this.has('tipping_point') ? 1 : 0);
+    run.topples = 1 + this.meta.rank('leverage') + (CONTRACTS[run.contract].topple ?? 0) + (this.has('tipping_point') ? 1 : 0);
     if (this.has('storm_caller') && !run.wave.guardian) run.wave.weather = 'storm';
     this.toppleDir = null;
     this.night = new Night(run.board, this.r, run.wave, {
@@ -606,9 +613,10 @@ export class Game {
         run.stats.kills++;
         if (fall) run.stats.fallKills++;
         // good defence earns more toppling
-        if (++run.killsTonight % KILLS_PER_TOPPLE === 0) { run.topples++; this.toast(`${run.killsTonight} enemies down: +1 topple!`); this.renderActions(); }
+        if (++run.killsTonight % TUNE.killsPerTopple === 0) { run.topples++; this.toast(`${run.killsTonight} enemies down: +1 topple!`); this.renderActions(); }
       },
       boardChanged: () => { this.r.syncBoard(run.board); this.trackStats(); },
+      dealt: (src, n) => { const d = (run.stats.dmgBy ??= {}); d[src] = (d[src] ?? 0) + n; },
     });
     this.r.setWeather(run.wave.weather);
     this.r.setGates(run.wave.sides);
@@ -630,7 +638,7 @@ export class Game {
   private mods() {
     const m = this.meta, b = this.biome;
     const t = this.run?.temper ?? {};
-    return { crystal: (1 + 0.15 * m.rank('lens')) * (1 + 0.15 * (t.crystal ?? 0)), ember: (1 + 0.15 * m.rank('kiln')) * b.emberMult * (1 + 0.15 * (t.ember ?? 0)), range: 0.25 * m.rank('eye'), crystalRange: b.crystalRange, wardRange: 0.4 * (t.ward ?? 0) };
+    return { crystal: (1 + 0.15 * m.rank('lens')) * (1 + 0.15 * (t.crystal ?? 0)), ember: (1 + 0.15 * m.rank('kiln')) * b.emberMult * (1 + 0.15 * (t.ember ?? 0)), arc: 1 + 0.15 * (t.arc ?? 0), range: 0.25 * m.rank('eye'), crystalRange: b.crystalRange, wardRange: 0.4 * (t.ward ?? 0) };
   }
 
   private coreDamage(n: number, by?: EnemyId, at?: THREE.Vector3) {
@@ -948,7 +956,7 @@ export class Game {
     const hearts = [...run.board.blocks()].filter(b => b.b.mat === 'rootheart');
     const boosted = [...run.board.blocks()].filter(b => b.b.mat === 'garden' && (this.has('deep_roots') || b.z === 0) && hearts.some(h => Math.max(Math.abs(h.x - b.x), Math.abs(h.y - b.y)) <= 2)).length;
     const gCount = (this.has('deep_roots') ? st.gardens : st.groundGardens) + boosted;
-    const gardens = Math.floor(1.85 * Math.sqrt(gCount) * this.biome.gardenMult);
+    const gardens = Math.floor(TUNE.gardenGold * Math.sqrt(gCount) * this.biome.gardenMult);
     if (gardens) income.push([this.has('deep_roots') ? 'Gardens (Deep Roots)' : 'Gardens on the ground', gardens]);
     if (this.has('cartographer')) income.push(['Cartographer', Math.floor(st.footprint / 6)]);
     if (this.has('arches')) income.push(['Vaulted Arches', Math.min(6, Math.floor(st.hollows / 2))]);
@@ -963,12 +971,12 @@ export class Game {
     const pool = this.meta.matPool();
     run.draft = Array.from({ length: 3 + this.meta.rank('draughtsman') }, () => {
       const p = randomPiece(pool);
-      if (Math.random() < 0.15) { p.gilded = true; p.name = `Gilded ${p.name}`; }
+      if (rand() < 0.15) { p.gilded = true; p.name = `Gilded ${p.name}`; }
       return p;
     });
     const owned = new Set(run.bag.flatMap(p => p.blocks.map(b => b.mat)));
     const fresh = UNIQUES.filter(u => !owned.has(u));
-    if (fresh.length && Math.random() < 0.1) run.draft[run.draft.length - 1] = uniquePiece(fresh[Math.floor(Math.random() * fresh.length)]);
+    if (fresh.length && rand() < 0.1) run.draft[run.draft.length - 1] = uniquePiece(fresh[Math.floor(rand() * fresh.length)]);
     run.draftPick = -1;
     run.treasure = CONTRACTS[run.contract].relic ? this.relicChoices(2) : [];
     run.treasurePick = -1;
@@ -1142,7 +1150,7 @@ export class Game {
   }
 
   private price(base: number) {
-    const f = (this.has('thrift') ? 0.7 : 1) * (1 - 0.1 * this.meta.rank('haggling')) * ((this.run?.heat ?? 0) >= 6 ? 1.25 : 1);
+    const f = (this.has('thrift') ? 0.7 : 1) * (1 - 0.1 * this.meta.rank('haggling')) * ((this.run?.heat ?? 0) >= 6 ? TUNE.heatPrices : 1);
     return Math.ceil(base * f);
   }
   /** Relics get pricier the more you own. */
@@ -1185,7 +1193,7 @@ export class Game {
       // skipping also clears out a plain stone piece, so the bag stays lean
       const plain = run.bag.filter(p => p.blocks.every(b => b.mat === 'stone'));
       if (plain.length && run.bag.length > 6) {
-        const p = plain[Math.floor(Math.random() * plain.length)];
+        const p = plain[Math.floor(rand() * plain.length)];
         run.bag.splice(run.bag.indexOf(p), 1);
         run.draw = run.draw.filter(d => d !== p);
         this.toast(`${p.name} left your bag.`);
@@ -1246,7 +1254,7 @@ export class Game {
 
   private nodeInfo(n: MapNode): { icon: string; name: string; desc: string } {
     if (n.kind === 'guardian') {
-      const g = makeWave(n.night!).guardian!;
+      const g = peek(() => makeWave(n.night!)).guardian!;
       return { icon: GUARDIAN_INFO.icon, name: ENEMIES[g].name, desc: `Night ${n.night}: the boss of this land. ${ENEMIES[g].desc}` };
     }
     if (n.kind === 'battle') {
@@ -1336,14 +1344,14 @@ export class Game {
     }), true, acts);
     if (run.day === 2 && m.visited.length === 1) this.coach('mapintro', 'The map', 'Choose your path to the boss at the top. Red squares are nights (the dots show how hard). The circles are stops that each give you one thing: a shop, a camp, a forge…');
     // keep the spot you are choosing on screen (the map is taller than a phone)
-    document.querySelector('.map .node.sel')?.scrollIntoView({ block: 'center' });
+    if (!HEADLESS) document.querySelector('.map .node.sel')?.scrollIntoView({ block: 'center' });
     this.renderHud();
   }
 
   /** Who is likely to come on a given night, rolled from the fortress as it stands. */
   private nightPreview(n: MapNode) {
     const run = this.run!;
-    const w = makeWave(n.night!, run.board.stats(), CONTRACTS[n.contract ?? 'standard']);
+    const w = peek(() => makeWave(n.night!, run.board.stats(), CONTRACTS[n.contract ?? 'standard'], run.heat));
     const counts = new Map<EnemyId, number>();
     for (const s of w.spawns) counts.set(s.type, (counts.get(s.type) ?? 0) + 1);
     return `<div class="preview"><span class="label">Expect about</span>${[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t, c]) => `<span class="pv" data-tip="<b>${ENEMIES[t].name}</b><br>${ENEMIES[t].desc}">${enemyGlyph(t)}${c}</span>`).join('')}</div>`;
@@ -1371,7 +1379,7 @@ export class Game {
     m.visited.push(n.id);
     if (n.kind === 'battle' || n.kind === 'guardian') {
       run.contract = n.contract ?? 'standard';
-      run.wave = makeWave(run.day, run.board.stats(), CONTRACTS[run.contract]);
+      run.wave = makeWave(run.day, run.board.stats(), CONTRACTS[run.contract], run.heat);
       run.wave.weather = n.weather ?? null;
       if (this.has('storm_caller') && !run.wave.guardian) run.wave.weather = 'storm';
       return this.startDay();
@@ -1384,7 +1392,7 @@ export class Game {
       run.marketSold = [false, false];
       const owned = new Set(run.bag.flatMap(p => p.blocks.map(b => b.mat)));
       const fresh = UNIQUES.filter(u => !owned.has(u));
-      run.premium = fresh.length ? uniquePiece(fresh[Math.floor(Math.random() * fresh.length)]) : null;
+      run.premium = fresh.length ? uniquePiece(fresh[Math.floor(rand() * fresh.length)]) : null;
       run.premiumSold = false;
       return this.showShop();
     }
@@ -1394,7 +1402,7 @@ export class Game {
       run.draft = shuffle(UNIQUES.filter(u => !owned.has(u))).slice(0, 2).map(u => uniquePiece(u));
       return this.showUnique();
     }
-    if (n.kind === 'event') { run.event = EVENTS[Math.floor(Math.random() * EVENTS.length)]; run.eventDone = ''; return this.showEvent(); }
+    if (n.kind === 'event') { run.event = EVENTS[Math.floor(rand() * EVENTS.length)]; run.eventDone = ''; return this.showEvent(); }
     if (n.kind === 'camp') return this.showCamp();
     return this.showForgeStop();
   }
@@ -1475,7 +1483,7 @@ export class Game {
     const damaged = [...run.board.blocks()].filter(b => b.b.hp < b.b.maxHp).length;
     const done = (msg: string) => { this.toast(msg); this.showMap(); };
     const acts: Record<string, () => void> = {
-      rest: () => { if (run.coreHp >= run.coreMax) return; run.coreHp = Math.min(run.coreMax, run.coreHp + CAMP_HEAL); sfx.coin(); done(`Core healed +${CAMP_HEAL}.`); },
+      rest: () => { if (run.coreHp >= run.coreMax) return; run.coreHp = Math.min(run.coreMax, run.coreHp + TUNE.campHeal); sfx.coin(); done(`Core healed +${TUNE.campHeal}.`); },
       mend: () => {
         if (!damaged) return;
         for (const { b } of run.board.blocks()) b.hp = b.maxHp;
@@ -1486,7 +1494,7 @@ export class Game {
     };
     const anything = run.coreHp < run.coreMax || damaged > 0 || run.coreLevel < 3;
     this.stopSheet('camp', `<div class="contracts" style="margin-top:16px">
-        ${this.option('✚', 'Rest', run.coreHp < run.coreMax ? `Heal the core +${CAMP_HEAL} HP (now ${Math.ceil(run.coreHp)}/${run.coreMax}).` : 'The core is already at full HP.', 'rest', run.coreHp < run.coreMax)}
+        ${this.option('✚', 'Rest', run.coreHp < run.coreMax ? `Heal the core +${TUNE.campHeal} HP (now ${Math.ceil(run.coreHp)}/${run.coreMax}).` : 'The core is already at full HP.', 'rest', run.coreHp < run.coreMax)}
         ${this.option('▤', 'Mend walls', damaged ? `Fully repair all ${damaged} damaged block${damaged > 1 ? 's' : ''}.` : 'Nothing is damaged.', 'mend', damaged > 0)}
         ${this.option('◎', `Core pulse ${Math.min(3, run.coreLevel + 1)}`, run.coreLevel < 3 ? 'The core’s shock wave hits harder and further, for the rest of the run.' : 'Already at the top level.', 'pulse', run.coreLevel < 3)}
         ${anything ? '' : this.option('◉', 'Gather', `Find +${CAMP_GOLD} gold.`, 'gather')}
@@ -1499,7 +1507,7 @@ export class Game {
     this.stopSheet('forge', `<div class="contracts" style="margin-top:16px">
         ${this.option('⚒', 'Forge a piece', 'Gild it (+50% HP for good) or turn its stone into a turret material.', 'forge')}
         ${this.option('✕', 'Throw a piece away', 'Remove one piece from your bag, so you draw your good ones more often.', 'remove', run.bag.length > 4)}
-        ${this.option('♦', 'Temper a material', 'Make every crystal, ember or ward block stronger for the rest of the run.', 'temper')}
+        ${this.option('♦', 'Temper a material', 'Make every crystal, ember, arc or ward block stronger for the rest of the run.', 'temper')}
       </div>`, {
       forge: () => this.showBag('forge', 0),
       temper: () => this.showTemper(),
@@ -1514,8 +1522,9 @@ export class Game {
     this.stopSheet('forge', `<div class="contracts" style="margin-top:16px">
         ${this.option('◇', `Crystal ${t('crystal') + 1}`, 'All crystal beams deal +15% damage.', 'tc')}
         ${this.option('△', `Ember ${t('ember') + 1}`, 'All ember shells deal +15% damage.', 'te')}
+        ${this.option('ϟ', `Arc ${t('arc') + 1}`, 'All arc lightning deals +15% damage.', 'ta')}
         ${this.option('○', `Ward ${t('ward') + 1}`, 'All ward fields reach +0.4 cells further.', 'tw')}
-      </div>`, { tc: () => pick('crystal'), te: () => pick('ember'), tw: () => pick('ward') }, 'Back');
+      </div>`, { tc: () => pick('crystal'), te: () => pick('ember'), ta: () => pick('arc'), tw: () => pick('ward') }, 'Back');
   }
 
   private showTreasure() {
@@ -1552,7 +1561,7 @@ export class Game {
           const fresh = UNIQUES.filter(u => !owned.has(u));
           if (run.gold < 6 || !fresh.length) return;
           run.gold -= 6;
-          const p = uniquePiece(fresh[Math.floor(Math.random() * fresh.length)]);
+          const p = uniquePiece(fresh[Math.floor(rand() * fresh.length)]);
           run.bag.push(p);
           run.eventDone = `You bought the ${p.name}. It is in your bag.`;
         } else if (run.event === 'shrine') {
@@ -1564,7 +1573,7 @@ export class Game {
         } else if (run.event === 'gambler') {
           if (run.gold < 5) return;
           run.gold -= 5;
-          const win = Math.random() < 0.5;
+          const win = rand() < 0.5;
           if (win) run.gold += 12;
           run.eventDone = win ? 'You won 12 gold!' : 'You lost the bet.';
         } else if (run.event === 'quarry') {
@@ -1612,7 +1621,7 @@ export class Game {
   private showForge(p: Piece, cost: number) {
     const run = this.run!;
     const turrets = this.meta.matPool().filter(m => MATS[m].turret);
-    const into = turrets[Math.floor(Math.random() * turrets.length)];
+    const into = turrets[Math.floor(rand() * turrets.length)];
     const hasStone = p.blocks.some(b => b.mat === 'stone');
     const transmuted: Piece = hasStone
       ? { ...p, blocks: p.blocks.map(b => (b.mat === 'stone' ? { ...b, mat: into } : b)) }
@@ -1646,6 +1655,7 @@ export class Game {
   // ======================= HUD =======================
 
   private renderHud() {
+    if (HEADLESS) return;
     this.renderTop();
     this.renderThreat();
     this.renderRelics();
@@ -1655,6 +1665,7 @@ export class Game {
   }
 
   private renderTop() {
+    if (HEADLESS) return;
     const run = this.run;
     if (!run) return;
     const st = run.board.stats();
@@ -1673,6 +1684,7 @@ export class Game {
   }
 
   private renderThreat() {
+    if (HEADLESS) return;
     const run = this.run!;
     const counts = new Map<EnemyId, number>();
     for (const s of run.wave.spawns) counts.set(s.type, (counts.get(s.type) ?? 0) + 1);
@@ -1722,6 +1734,7 @@ export class Game {
   private clearEdgeMarks() { $('edgemarks').innerHTML = ''; }
 
   private updateNightHud() {
+    if (HEADLESS) return;
     const n = this.night;
     if (!n) return;
     this.edgeMarks();
@@ -1769,6 +1782,7 @@ export class Game {
   }
 
   private renderHand() {
+    if (HEADLESS) return;
     const run = this.run!;
     const el = $('hand');
     this.fade(el, this.phase === 'day');
@@ -1792,6 +1806,7 @@ export class Game {
   }
 
   private renderActions() {
+    if (HEADLESS) return;
     const el = $('actions');
     const run = this.run!;
     if (this.actionsPhase && this.actionsPhase !== this.phase && el.children.length) this.ghostOut(el);
@@ -1888,6 +1903,7 @@ export class Game {
   }
 
   private setHint(extra?: string) {
+    if (HEADLESS) return;
     let h = '';
     if (this.phase === 'day') {
       const touch = matchMedia('(pointer: coarse)').matches;
@@ -2004,7 +2020,7 @@ export class Game {
         const range = turretRange(blk.mat, z, this.has, rangeBonus(this.mods(), blk.mat)) + (footing ? FOUNDATION_RANGE : 0);
         parts.push(`range ${range.toFixed(1)}`);
         const n = stackBelow(b, x, y, z);
-        if (n) parts.push(blk.mat === 'ward' ? `+${(0.3 * n).toFixed(1)} reach` : `+${Math.round(STACK_BONUS * n * 100)}% dmg`);
+        if (n) parts.push(blk.mat === 'ward' ? `+${(0.3 * n).toFixed(1)} reach` : blk.mat === 'arc' ? `+${n} jump${n > 1 ? 's' : ''}, +${Math.round(STACK_BONUS * n * 100)}% dmg` : `+${Math.round(STACK_BONUS * n * 100)}% dmg`);
         if (footing) parts.push('on stone');
         const touching = new Set<MatId>();
         for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) { const nb = b.blockAt(x + dx, y + dy, z + dz); if (nb) touching.add(nb.mat); }
@@ -2199,14 +2215,14 @@ export class Game {
     const same = !!html && !!old && key(old) === key(probe);
     const before = new Map<string, string>();
     if (same) el.querySelectorAll<HTMLElement>('[data-act]').forEach(n => before.set(n.dataset.act!, n.outerHTML));
-    const scroll = el.scrollTop, sheetScroll = old?.scrollTop ?? 0;
+    // reading scroll forces a layout; the headless bench has nothing to keep in place
+    const scroll = HEADLESS ? 0 : el.scrollTop, sheetScroll = HEADLESS ? 0 : old?.scrollTop ?? 0;
     if (old && !same) this.sheetOut(old, el.classList.contains('dim') && !html);
     el.innerHTML = html;
     const sheetEl = el.querySelector<HTMLElement>('.sheet');
     if (sheetEl && same) {
       sheetEl.classList.add('static');
-      el.scrollTop = scroll;
-      sheetEl.scrollTop = sheetScroll;
+      if (!HEADLESS) { el.scrollTop = scroll; sheetEl.scrollTop = sheetScroll; }
       el.querySelectorAll<HTMLElement>('[data-act]').forEach(n => { const was = before.get(n.dataset.act!); if (was !== undefined && was !== n.outerHTML) n.classList.add('changed'); });
     } else if (sheetEl) {
       sheetEl.classList.add('enter');
@@ -2233,6 +2249,7 @@ export class Game {
 
   /** A one-time tip for new players, pinned under the top bar until dismissed. */
   private coach(id: string, title: string, text: string) {
+    if (HEADLESS) return;
     if (this.coached.has(id) || this.meta.runs > 0) return;
     this.coached.add(id);
     try { localStorage.setItem('spire-coach', JSON.stringify([...this.coached])); } catch { /* fine */ }
@@ -2259,6 +2276,7 @@ export class Game {
 
   /** Re-trigger a CSS animation class (and drop it again once it has played). */
   private restart(el: HTMLElement, cls: string, ms: number) {
+    if (HEADLESS) return;
     el.classList.remove(cls);
     void el.offsetWidth;
     el.classList.add(cls);
@@ -2275,6 +2293,7 @@ export class Game {
 
   /** A copy of the element's current contents drops away while the real one gets new contents. */
   private ghostOut(el: HTMLElement) {
+    if (HEADLESS) return;
     const r = el.getBoundingClientRect();
     const c = el.cloneNode(true) as HTMLElement;
     c.classList.remove('fresh');
@@ -2291,6 +2310,7 @@ export class Game {
 
   /** The old sheet lifts off the table and fades while the new one comes in. */
   private sheetOut(old: HTMLElement, fadeDim: boolean) {
+    if (HEADLESS) return;
     const r = old.getBoundingClientRect();
     const wrap = document.createElement('div');
     wrap.className = 'sheet-out' + (fadeDim ? ' dim' : '');
@@ -2306,6 +2326,7 @@ export class Game {
 
   /** Numbers that changed since they were last shown count up or down and give a little bump. */
   private animateNumbers(root: ParentNode) {
+    if (HEADLESS) return;
     root.querySelectorAll<HTMLElement>('[data-num]').forEach(el => {
       const k = el.dataset.num!, to = Number(el.textContent);
       const from = this.nums.get(k);
@@ -2325,6 +2346,7 @@ export class Game {
   }
 
   private toast(msg: string, unlock = false) {
+    if (HEADLESS) return;
     const t = document.createElement('div');
     t.className = 'paper toast' + (unlock ? ' unlock' : '');
     t.innerHTML = `<span class="label">${unlock ? '★' : '▸'}</span>`;

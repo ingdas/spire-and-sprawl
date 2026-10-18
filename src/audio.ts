@@ -1,3 +1,5 @@
+import { HEADLESS } from './settings';
+
 // Tiny WebAudio synth; every sound is generated, no asset files.
 
 let ctx: AudioContext | null = null;
@@ -10,6 +12,7 @@ let musicVol = 0.5;
 const last = new Map<string, number>();
 
 function ac(): AudioContext | null {
+  if (HEADLESS) return null;
   if (!ctx) {
     try {
       ctx = new AudioContext();

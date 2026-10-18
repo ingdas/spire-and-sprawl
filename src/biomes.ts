@@ -1,5 +1,6 @@
 // Biomes: a run is three acts, and between acts the whole island is carried somewhere new.
 import { CORE, N } from './config';
+import { rand } from './rng';
 
 export type BiomeId = 'meadow' | 'dunes' | 'glacier' | 'caldera';
 
@@ -67,7 +68,7 @@ export const NIGHTS_PER_ACT = 4;
 
 /** Meadow first, then two different hard biomes in random order. */
 export function rollRoute(): BiomeId[] {
-  const rest: BiomeId[] = ['dunes', 'glacier', 'caldera'].sort(() => Math.random() - 0.5) as BiomeId[];
+  const rest: BiomeId[] = ['dunes', 'glacier', 'caldera'].sort(() => rand() - 0.5) as BiomeId[];
   return ['meadow', rest[0], rest[1]];
 }
 
@@ -77,7 +78,7 @@ export const actOf = (day: number) => Math.min(2, Math.floor((day - 1) / NIGHTS_
 export function randomCells(n: number, minDist: number, taken: (x: number, y: number) => boolean): { x: number; y: number }[] {
   const out: { x: number; y: number }[] = [];
   for (let i = 0; i < 400 && out.length < n; i++) {
-    const x = 1 + Math.floor(Math.random() * (N - 2)), y = 1 + Math.floor(Math.random() * (N - 2));
+    const x = 1 + Math.floor(rand() * (N - 2)), y = 1 + Math.floor(rand() * (N - 2));
     if (Math.abs(x - CORE.x) + Math.abs(y - CORE.y) < minDist || taken(x, y)) continue;
     if (out.some(c => Math.abs(c.x - x) + Math.abs(c.y - y) < 3)) continue;
     out.push({ x, y });

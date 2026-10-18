@@ -1,4 +1,5 @@
 // Core tuning values and static definitions.
+import { TUNE } from './tune';
 
 export const N = 13; // board is N x N cells
 export const CORE = { x: 6, y: 6 };
@@ -8,7 +9,7 @@ export const START_CORE_HP = 15;
 export const START_GOLD = 4;
 export const HAND_SIZE = 4;
 
-export type MatId = 'stone' | 'garden' | 'crystal' | 'ember' | 'ward' | 'beacon' | 'rock' | UniqueId;
+export type MatId = 'stone' | 'garden' | 'crystal' | 'ember' | 'ward' | 'arc' | 'beacon' | 'rock' | UniqueId;
 export type UniqueId = 'anvil' | 'bell' | 'keg' | 'omen' | 'fountain' | 'mirror' | 'ballista' | 'spikes' | 'vane' | 'rootheart' | 'lodestone' | 'hourglass';
 export const UNIQUES: UniqueId[] = ['anvil', 'bell', 'keg', 'omen', 'fountain', 'mirror', 'ballista', 'spikes', 'vane', 'rootheart', 'lodestone', 'hourglass'];
 
@@ -32,7 +33,7 @@ export const MATS: Record<MatId, MatDef> = {
   },
   garden: {
     id: 'garden', name: 'Garden', color: 0x86d16f, hp: 4, turret: false,
-    desc: 'Makes gold each dawn while on the ground (diminishing: 4 gardens = 5 gold, 16 = 10).',
+    desc: `Makes gold each dawn while on the ground (diminishing: 4 gardens = ${Math.floor(TUNE.gardenGold * 2)} gold, 16 = ${Math.floor(TUNE.gardenGold * 4)}).`,
   },
   crystal: {
     id: 'crystal', name: 'Crystal', color: 0x5fd8ec, hp: 5, turret: true,
@@ -45,6 +46,10 @@ export const MATS: Record<MatId, MatDef> = {
   ward: {
     id: 'ward', name: 'Ward', color: 0xae8cf5, hp: 6, turret: true,
     desc: 'Slows nearby enemies by 40% (fliers too, if raised). Radius grows with height.',
+  },
+  arc: {
+    id: 'arc', name: 'Arc', color: 0xb8e04a, hp: 5, turret: true,
+    desc: 'Zaps lightning that jumps between up to 3 nearby enemies, fliers too. Short range that barely grows with height. Each arc stacked below adds a jump.',
   },
   beacon: {
     id: 'beacon', name: 'Beacon', color: 0xf7d55c, hp: 5, turret: false,
@@ -110,6 +115,8 @@ export const TURRET = {
   crystal: { dmg: 1.2, cd: 0.7, range: 2.2, perLevel: 0.36 },
   ember: { dmg: 2.6, cd: 2.1, range: 2.8, perLevel: 0.3, splash: 0.95 },
   ward: { slow: 0.4, range: 1.6, perLevel: 0.25 },
+  /** chain lightning: hits the first enemy, then jumps to the nearest unhit one within `hop` */
+  arc: { dmg: 1.5, cd: 1.3, range: 2.2, perLevel: 0.1, jumps: 3, hop: 1.7, falloff: 0.8 },
 };
 
 export type EnemyId = 'shard' | 'runner' | 'brute' | 'flier' | 'sapper' | 'climber' | 'bomber' | 'bulwark' | 'wyrm' | 'leviathan' | 'boss';
@@ -191,7 +198,7 @@ export const PALETTE = {
 
 /** Okabe-Ito based colours for the materials that are easy to confuse, used by the colour-blind setting. */
 export const CB_COLORS: Partial<Record<MatId, number>> = {
-  garden: 0x009e73, crystal: 0x56b4e9, ember: 0xe69f00, ward: 0xcc79a7, beacon: 0xf0e442, stone: 0xd8d2c4,
+  garden: 0x009e73, crystal: 0x56b4e9, ember: 0xe69f00, ward: 0xcc79a7, arc: 0x009e9e, beacon: 0xf0e442, stone: 0xd8d2c4,
 };
 const BASE_COLORS = Object.fromEntries(Object.entries(MATS).map(([k, m]) => [k, m.color])) as Record<MatId, number>;
 export function applyColorBlind(on: boolean) {

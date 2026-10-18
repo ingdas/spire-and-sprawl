@@ -3,8 +3,10 @@ import { sfx } from './audio';
 import { BiomeDef } from './biomes';
 import { Block, Board } from './board';
 import { CORE, ENEMIES, EnemyDef, EnemyId, MATS, MatId, N, TURRET } from './config';
+import { TUNE } from './tune';
 import { RelicId } from './meta';
 import { EnemyView, Renderer, world } from './render';
+import { rand } from './rng';
 
 export interface SpawnSpec { t: number; type: EnemyId; side: number }
 export interface Wave { sides: number[]; spawns: SpawnSpec[]; hpScale: number; elite: boolean; boss: boolean; guardian: EnemyId | null; weather: WeatherId | null; night: number }
@@ -14,7 +16,7 @@ export const FOUNDATION_RANGE = 1;
 export const isFoundation = (mat: MatId | undefined) => mat === 'stone' || mat === 'rock';
 
 export function turretRange(mat: MatId, z: number, has: (r: RelicId) => boolean, bonus = 0): number {
-  const spec = TURRET[mat as 'crystal' | 'ember' | 'ward'];
+  const spec = TURRET[mat as 'crystal' | 'ember' | 'ward' | 'arc'];
   if (!spec) return 0;
   // height pays off strongly up to level 6, then with diminishing returns
   const lvl = z <= 6 ? z : 6 + (z - 6) * 0.15;
@@ -62,31 +64,33 @@ export const CONTRACTS: Record<ContractId, ContractDef> = {
 };
 
 /** Waves adapt to the board: tall builds draw sappers, sprawling ones draw brutes. */
-export function makeWave(night: number, board?: { tallest: number; footprint: number; turrets: number }, contract: ContractDef = CONTRACTS.standard): Wave {
+export function makeWave(night: number, board?: { tallest: number; footprint: number; turrets: number }, contract: ContractDef = CONTRACTS.standard, heat = 0): Wave {
   // guardian nights trade part of the regular wave for the guardian itself
   // the first night in a new land is a little lighter: the journey already cost you blocks
-  const budgetBase = (2 + night * 3.5 + night * night * 0.6) * contract.budget * (night === 4 || night === 8 ? 0.6 : 1) * (night === 5 ? 0.85 : night === 9 ? 0.75 : 1);
-  const hpScale = Math.pow(1.2, night - 1) * Math.min(2.4, 1 + 0.3 * Math.max(0, night - 2));
-  const sideCount = night <= 2 ? 1 : night <= 6 ? 1 + (Math.random() < 0.55 ? 1 : 0) : 2 + (Math.random() < 0.45 ? 1 : 0);
-  const sides = [0, 1, 2, 3].sort(() => Math.random() - 0.5).slice(0, sideCount).sort();
-  const weights: Partial<Record<EnemyId, number>> = { shard: 3, runner: 2, flier: 1.2, brute: 0.7, sapper: 0.8, climber: 0.5, bomber: 0.45, bulwark: 0.35 };
+  const T = TUNE;
+  const budgetBase = (2 + night * T.budgetLinear + night * night * T.budgetQuad) * contract.budget * (night === 4 || night === 8 ? T.guardianNightBudget : 1) * (night === 5 ? T.landingNight5 : night === 9 ? T.landingNight9 : 1) * (heat >= 8 ? T.heatBudget : 1);
+  const hpScale = Math.pow(T.enemyHpGrowth, night - 1) * Math.min(T.enemyHpCap, 1 + 0.3 * Math.max(0, night - 2));
+  const sideCount = night <= 2 ? 1 : night <= 6 ? 1 + (rand() < 0.55 ? 1 : 0) : 2 + (rand() < 0.45 ? 1 : 0);
+  const sides = [0, 1, 2, 3].sort(() => rand() - 0.5).slice(0, sideCount).sort();
+  const weights = { ...T.weights } as Partial<Record<EnemyId, number>>;
   if (board && board.tallest >= 7) weights.sapper! *= 1 + (board.tallest - 6) * 0.35;
   if (board && board.footprint >= 30) weights.brute! *= 1 + (board.footprint - 29) * 0.05;
   // counter-enemies: each one leans on a different dominant build
   if (board && board.footprint >= 24) weights.climber! *= 1 + (board.footprint - 23) * 0.06;
   // walls can't stop fliers, so a sprawling fortress draws more of them
-  if (board && board.footprint >= 30) weights.flier! *= 1 + (board.footprint - 29) * 0.045;
+  if (board && board.footprint >= 30) weights.flier! *= 1 + (board.footprint - 29) * T.flierPerCell;
   if (board && board.tallest >= 6) weights.bomber! *= 1 + (board.tallest - 5) * 0.2;
-  if (board && board.turrets >= 8) weights.bulwark! *= 1 + (board.turrets - 7) * 0.08;
+  if (board && board.turrets >= 8) weights.bulwark! *= 1 + (board.turrets - 7) * T.bulwarkPerTurret;
+  if (heat >= 9) weights.flier! *= T.heatFliers;
   for (const [id, w] of Object.entries(contract.weights ?? {})) weights[id as EnemyId] = (weights[id as EnemyId] ?? 1) * w;
   // a contract can bring its featured enemies a few nights early
-  const pool = (Object.values(ENEMIES) as EnemyDef[]).filter(e => e.cost > 0 && e.minNight <= night + (contract.weights?.[e.id] ? 3 : 0));
+  const pool = (Object.values(ENEMIES) as EnemyDef[]).filter(e => e.cost > 0 && (e.minNight <= night + (contract.weights?.[e.id] ? 3 : 0) || (heat >= 9 && e.id === 'flier')));
   const types: EnemyId[] = [];
   let budget = budgetBase;
   while (budget >= 1) {
     const avail = pool.filter(e => e.cost <= budget);
     const total = avail.reduce((s, e) => s + (weights[e.id] ?? 1), 0);
-    let r = Math.random() * total;
+    let r = rand() * total;
     let pick = avail[0];
     for (const e of avail) { r -= weights[e.id] ?? 1; if (r <= 0) { pick = e; break; } }
     types.push(pick.id);
@@ -98,12 +102,12 @@ export function makeWave(night: number, board?: { tallest: number; footprint: nu
   // enemies arrive in packs so defenses get tested by bursts rather than a trickle
   const dur = Math.min(32, 5 + types.length * 0.55);
   const spawns: SpawnSpec[] = [];
-  const order = types.sort(() => Math.random() - 0.5);
+  const order = types.sort(() => rand() - 0.5);
   for (let i = 0; i < order.length;) {
-    const size = 3 + Math.floor(Math.random() * 4);
-    const t = Math.random() * dur;
-    const side = sides[Math.floor(Math.random() * sides.length)];
-    for (const type of order.slice(i, i + size)) spawns.push({ t: t + Math.random() * 1.2, type, side });
+    const size = 3 + Math.floor(rand() * 4);
+    const t = rand() * dur;
+    const side = sides[Math.floor(rand() * sides.length)];
+    for (const type of order.slice(i, i + size)) spawns.push({ t: t + rand() * 1.2, type, side });
     i += size;
   }
   // every act ends with a guardian; the last one is the Dodecarch
@@ -111,7 +115,7 @@ export function makeWave(night: number, board?: { tallest: number; footprint: nu
   if (guardian) spawns.push({ t: 5, type: guardian, side: sides[0] });
   spawns.sort((a, b) => a.t - b.t);
   // weather from night 2 on, never on guardian nights
-  const weather: WeatherId | null = night >= 2 && !guardian && Math.random() < 0.35 ? (['fog', 'storm', 'moon'] as WeatherId[])[Math.floor(Math.random() * 3)] : null;
+  const weather: WeatherId | null = night >= 2 && !guardian && rand() < 0.35 ? (['fog', 'storm', 'moon'] as WeatherId[])[Math.floor(rand() * 3)] : null;
   return { sides, spawns, hpScale, elite, boss, guardian, weather, night };
 }
 
@@ -148,7 +152,7 @@ interface Turret { x: number; y: number; z: number; b: Block; mat: MatId; range:
 /** Material reactions between touching blocks (sides, above or below). */
 const UNIQUE_SPOTS: MatId[] = ['ballista', 'spikes', 'vane', 'lodestone', 'hourglass'];
 
-export type Reaction = 'frost' | 'smoke' | 'sparks' | 'bloom' | 'wildfire' | 'shrapnel' | 'bramble' | 'deepchill' | 'glint';
+export type Reaction = 'frost' | 'smoke' | 'sparks' | 'bloom' | 'wildfire' | 'shrapnel' | 'bramble' | 'deepchill' | 'glint' | 'static' | 'grounded';
 /** Combos: a turret touching (side, above or below) a certain block gets a twist. First match wins. */
 export const REACTIONS: Record<Reaction, { name: string; desc: string; turret: MatId; with: MatId; icon: string }> = {
   frost: { name: 'Frost beam', desc: 'crystal touching ward: beams slow enemies', turret: 'crystal', with: 'ward', icon: '❄' },
@@ -160,6 +164,8 @@ export const REACTIONS: Record<Reaction, { name: string; desc: string; turret: M
   shrapnel: { name: 'Shrapnel', desc: 'ember touching stone: +30% blast radius', turret: 'ember', with: 'stone', icon: '✱' },
   bramble: { name: 'Brambles', desc: 'ward touching garden: enemies in the field take damage', turret: 'ward', with: 'garden', icon: '♣' },
   deepchill: { name: 'Deep chill', desc: 'ward touching crystal: the field slows much harder', turret: 'ward', with: 'crystal', icon: '❅' },
+  static: { name: 'Static', desc: 'arc touching ward: every zap stuns for a moment', turret: 'arc', with: 'ward', icon: 'ϟ' },
+  grounded: { name: 'Grounded', desc: 'arc touching stone: lightning jumps 2 more times', turret: 'arc', with: 'stone', icon: '⏚' },
 };
 
 export function reactionOf(mat: MatId, touching: Set<MatId>): Reaction | null {
@@ -171,8 +177,6 @@ export function reactionOf(mat: MatId, touching: Set<MatId>): Reaction | null {
 export const STACK_BONUS = 0.25;
 /** seconds a toppled tower takes to swing down (the renderer animates the same swing) */
 export const TOPPLE_SWING = 0.4;
-/** crystals at this height or higher deal +60% damage to flying enemies */
-export const HIGH_AA = 3;
 /** Damage per toppled block landing on an enemy, before the night's HP scaling. */
 export const TOPPLE_DMG = 5;
 
@@ -187,7 +191,7 @@ export function stackBelow(board: Board, x: number, y: number, z: number): numbe
 
 interface Shell { mesh: THREE.Mesh; from: THREE.Vector3; to: THREE.Vector3; t: number; dur: number; dmg: number; radius: number; smoke: boolean; fire: boolean }
 
-export interface Mods { crystal: number; ember: number; range: number; crystalRange: number; wardRange?: number }
+export interface Mods { crystal: number; ember: number; arc?: number; range: number; crystalRange: number; wardRange?: number }
 
 /** Range bonus a turret of this material gets from workshop + biome. */
 export const rangeBonus = (m: Mods, mat: MatId) => m.range + (mat === 'crystal' ? m.crystalRange : 0);
@@ -210,6 +214,8 @@ export interface SimHooks {
   coreDamage: (n: number, by: EnemyId, at: THREE.Vector3) => void;
   onKill: (fall: boolean) => void;
   boardChanged: () => void;
+  /** damage dealt to enemies, by source (turret material, 'topple', 'unique', 'other') */
+  dealt?: (src: string, n: number) => void;
 }
 
 
@@ -242,6 +248,8 @@ export class Night {
   private ventCd = 6;
   done = false;
   bossRef: Enemy | null = null;
+  /** who is dealing damage right now, for the damage-by-source tally */
+  private src = 'other';
   /** heat 10: the final boss has already got back up */
   private bossRose = false;
 
@@ -253,23 +261,23 @@ export class Night {
 
   private spawn(s: SpawnSpec) {
     const def = ENEMIES[s.type];
-    const k = Math.floor(Math.random() * N);
+    const k = Math.floor(rand() * N);
     const edge = [{ x: k, y: 0 }, { x: N - 1, y: k }, { x: k, y: N - 1 }, { x: 0, y: k }][s.side];
     const out = [{ x: k, y: -1.3 }, { x: N + 0.3, y: k }, { x: k, y: N + 0.3 }, { x: -1.3, y: k }][s.side];
     // guardians have hand-tuned HP; everything else scales with the night
     const heat = this.hooks.heat;
-    const hp = def.minNight >= 99 ? def.hp * (heat >= 4 ? 1.5 : 1) : def.hp * this.wave.hpScale * (heat >= 1 ? 1.2 : 1);
+    const hp = def.minNight >= 99 ? def.hp * (heat >= 4 ? TUNE.heatGuardianHp : 1) : def.hp * this.wave.hpScale * (heat >= 1 ? TUNE.heatEnemyHp : 1);
     const e: Enemy = {
       type: s.type, def, hp, maxHp: hp, pos: new THREE.Vector2(out.x, out.y), alt: 0,
       cur: null, next: edge, mode: s.type === 'flier' || s.type === 'bomber' || s.type === 'leviathan' ? 'fly' : s.type === 'climber' ? 'climb' : 'walk', sapTarget: null,
-      slow: 0, flash: 0, view: this.r.makeEnemy(s.type), dead: false, t: Math.random() * 10, shed: 3, chewing: null, stun: 0, hidden: false, chill: 0, affix: null, marked: 0,
+      slow: 0, flash: 0, view: this.r.makeEnemy(s.type), dead: false, t: rand() * 10, shed: 3, chewing: null, stun: 0, hidden: false, chill: 0, affix: null, marked: 0,
     };
     if (s.type === 'sapper') this.retargetSapper(e);
     if (s.type === 'wyrm') e.hidden = true;
     // elites: from night 5 some regulars roll a trait
     const hot = this.hooks.heat >= 3;
-    if (def.minNight < 99 && this.wave.night >= (hot ? 2 : 5) && Math.random() < (0.07 + 0.012 * this.wave.night) * (hot ? 2 : 1)) {
-      e.affix = AFFIXES[Math.floor(Math.random() * AFFIXES.length)];
+    if (def.minNight < 99 && this.wave.night >= (hot ? 2 : 5) && rand() < (0.07 + 0.012 * this.wave.night) * (hot ? TUNE.heatElites : 1)) {
+      e.affix = AFFIXES[Math.floor(rand() * AFFIXES.length)];
       if (e.affix === 'armored') { e.hp *= 2; e.maxHp *= 2; }
       this.r.markElite(e.view);
     }
@@ -327,7 +335,7 @@ export class Night {
       const cdMult = (has('focus_lens') && blk.mat === 'crystal' ? 1 / 1.35 : 1) * (blk.mat === 'crystal' && touching.has('mirror') ? 1 / 1.6 : 1);
       this.turrets.push({
         x, y, z, b: blk, mat: blk.mat, range: range + (blk.mat === 'ward' ? 0.3 * stack + (this.hooks.mods.wardRange ?? 0) : 0), dmgMult, cdMult, stack,
-        cd: Math.random() * 0.5, hitsAir: blk.mat !== 'ember' && z >= 1, react: reactionOf(blk.mat, touching),
+        cd: rand() * 0.5, hitsAir: blk.mat === 'arc' || (blk.mat !== 'ember' && z >= 1), react: reactionOf(blk.mat, touching),
       });
     }
     this.turretVersion = b.version;
@@ -343,12 +351,13 @@ export class Night {
     if (this.omens.some(o => Math.hypot(e.pos.x - o.x, e.pos.y - o.y) <= 2.2)) dmg *= 1.5;
     if (e.type === 'bulwark' && !pierce) dmg *= 0.5;
     if (e.marked > 0) dmg *= 2;
+    this.hooks.dealt?.(this.src, Math.min(dmg, Math.max(0, e.hp)));
     e.hp -= dmg;
     e.flash = 0.12;
     if (e.hp <= 0 && e === this.bossRef && e.type === 'boss' && this.hooks.heat >= 10 && !this.bossRose) {
       // heat 10: the boss gets back up once with half its HP
       this.bossRose = true;
-      e.hp = e.maxHp * 0.5;
+      e.hp = e.maxHp * TUNE.heatBossRise;
       e.stun = 1.2;
       this.r.shakeCam(0.5);
       this.r.ring(this.enemyWorld(e), 3, 0xff5a3a, 0.7);
@@ -440,6 +449,12 @@ export class Night {
   }
 
   private landTopple(cells: { x: number; y: number; z: number; mat: MatId }[], d: number, chain: number) {
+    const was = this.src;
+    this.src = 'topple';
+    try { this.crush(cells, d, chain); } finally { this.src = was; }
+  }
+
+  private crush(cells: { x: number; y: number; z: number; mat: MatId }[], d: number, chain: number) {
     // dominoes: the first tower it slams into (2+ blocks before impact) tips over too, a beat later
     const hit = cells.find(c => c.z >= 2);
     if (hit && (chain < 3 || this.hooks.has('domino'))) this.dominoes.push({ x: hit.x, y: hit.y, d, t: 0.12, chain: chain + 1 });
@@ -507,6 +522,7 @@ export class Night {
 
     for (const e of this.enemies) { e.slow = 0; e.marked = Math.max(0, e.marked - dt); }
     // wards
+    this.src = 'ward';
     this.wardPulse -= dt;
     const pulse = this.wardPulse <= 0;
     if (pulse) this.wardPulse = 1.6;
@@ -527,12 +543,15 @@ export class Night {
       for (const e of this.enemies) if (e.mode !== 'fly' && Math.hypot(e.pos.x - z.x, e.pos.y - z.y) <= z.r) e.slow = Math.max(e.slow, 0.5);
     }
     this.zones = this.zones.filter(z => z.t > 0);
+    this.src = 'ember';
     for (const f of this.fires) {
       f.t -= dt;
       for (const e of this.enemies) if (e.mode !== 'fly' && Math.hypot(e.pos.x - f.x, e.pos.y - f.y) <= f.r) this.damage(e, f.dps * dt);
     }
     this.fires = this.fires.filter(f => f.t > 0);
+    this.src = 'unique';
     this.uniques(dt);
+    this.src = 'other';
     // chilled by frost beams or smoke shells
     for (const e of this.enemies) if (e.chill > 0) { e.chill -= dt; e.slow = Math.max(e.slow, 0.4); }
     // bells stun everything on the ground in earshot
@@ -555,17 +574,18 @@ export class Night {
     // turrets
     for (const tu of this.turrets) {
       if (tu.mat === 'ward') continue;
+      this.src = tu.mat;
       tu.cd -= dt * (this.rally > 0 ? 2 : 1);
       if (tu.cd > 0) continue;
       const from = world(tu.x, tu.y, tu.z + 0.8);
       if (tu.mat === 'crystal') {
         const tgt = this.nearestTarget(tu.x, tu.y, tu.range, tu.hitsAir);
         if (!tgt) { tu.cd = 0.1; continue; }
-        const dmg = TURRET.crystal.dmg * tu.dmgMult * this.hooks.mods.crystal;
+        const dmg = TURRET.crystal.dmg * tu.dmgMult * this.hooks.mods.crystal * TUNE.dmg.crystal;
         this.r.shot(from, this.enemyWorld(tgt), tu.react ? 0xd7f7ff : 0x9ff3ff);
         const wasAlive = !tgt.dead;
         // height is the answer to the air: high crystals hit fliers and bombers much harder
-        this.damage(tgt, dmg * (tgt.mode === 'fly' && tu.z >= HIGH_AA ? 1.6 : 1));
+        this.damage(tgt, dmg * (tgt.mode === 'fly' && tu.z >= TUNE.highAA ? TUNE.highAAMult : 1));
         if (tu.react === 'bloom' && wasAlive && tgt.dead) this.hooks.gold(1, this.enemyWorld(tgt));
         if (tu.react === 'glint') {
           const next = this.nearestTarget(tgt.pos.x, tgt.pos.y, 1.8, tu.hitsAir, true, tgt);
@@ -591,15 +611,44 @@ export class Night {
         const fs = has('firestorm');
         this.shells.push({
           mesh: this.r.makeShell(), from, to, t: 0, dur: 0.5 + dist * 0.06,
-          dmg: (TURRET.ember.dmg + (fs ? 1 : 0)) * tu.dmgMult * this.hooks.mods.ember, radius: TURRET.ember.splash * (fs ? 1.6 : 1) * (1 + 0.12 * tu.stack) * (tu.react === 'shrapnel' ? 1.3 : 1), smoke: tu.react === 'smoke', fire: tu.react === 'wildfire',
+          dmg: (TURRET.ember.dmg + (fs ? 1 : 0)) * tu.dmgMult * this.hooks.mods.ember * TUNE.dmg.ember, radius: TURRET.ember.splash * (fs ? 1.6 : 1) * (1 + 0.12 * tu.stack) * (tu.react === 'shrapnel' ? 1.3 : 1), smoke: tu.react === 'smoke', fire: tu.react === 'wildfire',
         });
         sfx.shell();
         this.r.kickBlock(tu.b.id, 3.5);
         tu.cd = TURRET.ember.cd * tu.cdMult;
+      } else if (tu.mat === 'arc') {
+        const A = TURRET.arc;
+        let tgt = this.nearestTarget(tu.x, tu.y, tu.range, true);
+        if (!tgt) { tu.cd = 0.1; continue; }
+        // chain lightning: each jump goes to the nearest enemy not hit yet, a little weaker each time
+        const hit = new Set<Enemy>();
+        const jumps = A.jumps + tu.stack + (tu.react === 'grounded' ? 2 : 0);
+        let dmg = A.dmg * tu.dmgMult * (this.hooks.mods.arc ?? 1) * TUNE.dmg.arc;
+        let at = from;
+        for (let j = 0; j < jumps && tgt; j++) {
+          hit.add(tgt);
+          const to = this.enemyWorld(tgt);
+          this.r.lightning(at, to);
+          this.damage(tgt, dmg);
+          if (tu.react === 'static' && tgt.mode !== 'fly') tgt.stun = Math.max(tgt.stun, 0.35);
+          at = to;
+          dmg *= A.falloff;
+          let next: Enemy | null = null, nd = A.hop;
+          for (const e of this.enemies) {
+            if (e.dead || e.hidden || hit.has(e)) continue;
+            const d = Math.hypot(e.pos.x - tgt.pos.x, e.pos.y - tgt.pos.y);
+            if (d <= nd) { nd = d; next = e; }
+          }
+          tgt = next;
+        }
+        sfx.zap();
+        this.r.kickBlock(tu.b.id, 2.5);
+        tu.cd = A.cd * tu.cdMult;
       }
     }
 
     // shells
+    this.src = 'ember';
     for (let i = this.shells.length - 1; i >= 0; i--) {
       const s = this.shells[i];
       s.t += dt;
@@ -627,6 +676,7 @@ export class Night {
     }
 
     // core pulse
+    this.src = 'core';
     this.coreCd -= dt;
     if (this.coreCd <= 0) {
       const seismic = has('seismic');
@@ -701,8 +751,8 @@ export class Night {
     const { biome, vents } = this.hooks;
     const active = this.queue.length + this.enemies.length > 0;
     if (biome.gusts && active && (this.gustCd -= dt) <= 0) {
-      this.gustCd = 9 + Math.random() * 6;
-      const side = this.wave.sides[Math.floor(Math.random() * this.wave.sides.length)];
+      this.gustCd = 9 + rand() * 6;
+      const side = this.wave.sides[Math.floor(rand() * this.wave.sides.length)];
       // the wind catches the tallest tower on the windward half
       let best: { x: number; y: number; h: number } | null = null;
       for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
@@ -718,7 +768,7 @@ export class Night {
       }
     }
     if (this.wave.weather === 'storm' && active && (this.stormCd -= dt) <= 0) {
-      this.stormCd = 7 + Math.random() * 3;
+      this.stormCd = 7 + rand() * 3;
       const st = this.board.stats();
       if (st.tallest >= 2) {
         const { x, y } = st.tallestAt, h = st.tallest;
@@ -735,8 +785,8 @@ export class Night {
       }
     }
     if (vents.length && active && (this.ventCd -= dt) <= 0) {
-      this.ventCd = 8 + Math.random() * 5;
-      const v = vents[Math.floor(Math.random() * vents.length)];
+      this.ventCd = 8 + rand() * 5;
+      const v = vents[Math.floor(rand() * vents.length)];
       this.r.eruption(v.x, v.y);
       sfx.boom();
       for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -755,7 +805,7 @@ export class Night {
     if (e.dead) return;
     if (e.stun > 0) { e.stun -= dt; return; }
     if (e.affix === 'regen') e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.04 * dt);
-    const speed = e.def.speed * (1 - e.slow) * dt * this.hooks.biome.enemySpeed * (this.wave.weather === 'moon' ? 1.15 : 1) * (e.affix === 'hasted' ? 1.4 : 1);
+    const speed = e.def.speed * (1 - e.slow) * dt * this.hooks.biome.enemySpeed * (this.wave.weather === 'moon' ? 1.15 : 1) * (e.affix === 'hasted' ? 1.4 : 1) * (this.hooks.heat >= 7 ? TUNE.heatSpeed : 1);
     e.chewing = null;
 
     if (e.type === 'boss') {
@@ -860,7 +910,7 @@ export class Night {
       if (dist <= 0.66) {
         const blk = this.board.col(nx, ny)[0]!;
         e.chewing = { x: nx, y: ny };
-        blk.hp -= e.def.chew * dt * (this.hooks.heat >= 7 ? 1.25 : 1);
+        blk.hp -= e.def.chew * dt;
         blk.flash = 0.08;
         sfx.chew();
         if (blk.hp <= 0) this.destroyBlock(nx, ny, 0);

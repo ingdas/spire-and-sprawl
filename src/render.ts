@@ -104,13 +104,14 @@ function boulder() {
 
 /**
  * Every material has its own silhouette, so towers read by shape as well as colour:
- * bevelled stone, faceted crystal, a tapered ember brazier, an eight-sided ward, a rough rock.
+ * bevelled stone, faceted crystal, a tapered ember brazier, an eight-sided ward, a waisted arc coil, a rough rock.
  */
 const BLOCK_GEO: Partial<Record<MatId, THREE.BufferGeometry>> = {
   stone: new RoundedBoxGeometry(0.94, 0.94, 0.94, 2, 0.07),
   crystal: new RoundedBoxGeometry(0.9, 0.94, 0.9, 1, 0.17),
   ember: new THREE.CylinderGeometry(0.67, 0.56, 0.94, 4, 1).rotateY(Math.PI / 4),
   ward: new THREE.CylinderGeometry(0.5, 0.5, 0.94, 8, 1).rotateY(Math.PI / 8),
+  arc: new THREE.LatheGeometry([[0, -0.47], [0.6, -0.47], [0.44, 0], [0.6, 0.47], [0, 0.47]].map(([x, y]) => new THREE.Vector2(x, y)), 6).rotateY(Math.PI / 6),
   beacon: new RoundedBoxGeometry(0.9, 0.94, 0.9, 2, 0.12),
   rock: boulder(),
 };
@@ -139,6 +140,9 @@ function facePattern(mat: MatId): THREE.Texture {
     g.strokeStyle = shade(0.66);
     g.beginPath(); g.arc(32, 32, 16, 0, Math.PI * 2); g.stroke();
     g.beginPath(); g.moveTo(32, 12); g.lineTo(32, 52); g.moveTo(18, 40); g.lineTo(46, 24); g.stroke();
+  } else if (mat === 'arc') {
+    g.strokeStyle = shade(0.55); g.lineWidth = 5; g.lineJoin = 'miter';
+    g.beginPath(); g.moveTo(38, 6); g.lineTo(22, 32); g.lineTo(40, 32); g.lineTo(24, 58); g.stroke();
   } else if (mat === 'beacon') {
     g.fillStyle = shade(0.6); g.fillRect(16, 14, 32, 36);
     g.fillStyle = shade(1); g.fillRect(21, 19, 22, 26);
@@ -675,6 +679,19 @@ export class Renderer {
       m.position.y = 0.72;
       m.rotation.x = Math.PI / 2;
       m.userData.spin = 1;
+      g.add(m);
+    } else if (mat === 'arc') {
+      // a little coil with a sparking ball on top
+      for (const y of [0.56, 0.66]) {
+        const c = outlined(GEO.ring, toon(0x6b7a3a), 0.02);
+        c.scale.setScalar(0.8);
+        c.position.y = y;
+        c.rotation.x = Math.PI / 2;
+        g.add(c);
+      }
+      const m = outlined(GEO.orb, toon(0xeaffa0, { emissive: 0x5a7010 }), 0.03);
+      m.position.y = 0.82;
+      m.userData.bob = true;
       g.add(m);
     } else if (mat === 'beacon') {
       const m = outlined(GEO.orb, toon(0xfff1a6, { emissive: 0x806010 }), 0.03);

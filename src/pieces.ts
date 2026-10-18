@@ -1,5 +1,6 @@
 import type { RelicId } from './meta';
 import { MATS, MatId } from './config';
+import { rand } from './rng';
 
 export interface PBlock { x: number; y: number; z: number; mat: MatId }
 export interface Piece { uid: number; name: string; blocks: PBlock[]; gilded?: boolean }
@@ -67,7 +68,7 @@ export function make(shapeName: string, mat: MatId, top?: MatId): Piece {
 
 function pickWeighted<T>(items: T[], weight: (t: T) => number): T {
   const total = items.reduce((s, t) => s + weight(t), 0);
-  let r = Math.random() * total;
+  let r = rand() * total;
   for (const t of items) {
     r -= weight(t);
     if (r <= 0) return t;
@@ -77,18 +78,18 @@ function pickWeighted<T>(items: T[], weight: (t: T) => number): T {
 
 export function randomPiece(matPool: MatId[]): Piece {
   const shape = pickWeighted(SHAPES, s => s.weight);
-  const matWeights: Partial<Record<MatId, number>> = { stone: 3, garden: 2.2, crystal: 2, ember: 1.5, ward: 1, beacon: 0.9 };
+  const matWeights: Partial<Record<MatId, number>> = { stone: 3, garden: 2.2, crystal: 2, ember: 1.5, arc: 1.3, ward: 1, beacon: 0.9 };
   const primary = pickWeighted(matPool, m => matWeights[m] ?? 1);
   const turrets = matPool.filter(m => MATS[m].turret);
   const mats: MatId[] = shape.cells.map(() => primary);
   const maxZ = Math.max(...shape.cells.map(c => c[2]));
-  if (maxZ > 0 && Math.random() < 0.55) {
-    const crown = turrets[Math.floor(Math.random() * turrets.length)];
+  if (maxZ > 0 && rand() < 0.55) {
+    const crown = turrets[Math.floor(rand() * turrets.length)];
     shape.cells.forEach((c, i) => {
       mats[i] = c[2] === maxZ ? crown : 'stone';
     });
-  } else if (shape.cells.length > 1 && Math.random() < 0.3) {
-    const i = Math.floor(Math.random() * shape.cells.length);
+  } else if (shape.cells.length > 1 && rand() < 0.3) {
+    const i = Math.floor(rand() * shape.cells.length);
     mats[i] = pickWeighted(matPool.filter(m => m !== primary), m => matWeights[m] ?? 1);
   }
   return build(shape, mats);
@@ -121,7 +122,7 @@ export const FOUNDERS: Record<FounderId, { name: string; desc: string; relic?: R
       uniquePiece('fountain'),
       make('Pebble', 'stone'), make('Slab', 'stone'), make('Tee', 'stone'),
       make('Line', 'garden'), make('Corner', 'garden'),
-      make('Slab', 'crystal'), make('Pebble', 'crystal'),
+      make('Slab', 'crystal'), make('Pebble', 'arc'),
       make('Corner', 'ember'), make('Pillar', 'stone', 'crystal'),
     ],
   },
@@ -138,13 +139,13 @@ export const FOUNDERS: Record<FounderId, { name: string; desc: string; relic?: R
   },
   sprawler: {
     name: 'Sprawler',
-    desc: 'Wide gardens and walls, a Root Heart for double garden gold, and the Cartographer relic. Built to spread out.',
+    desc: 'Wide gardens, walls and arcs, a Root Heart for double garden gold, and the Cartographer relic. Built to spread out.',
     relic: 'cartographer',
     bag: () => [
       uniquePiece('rootheart'),
       make('Square', 'garden'), make('Line', 'garden'), make('Zig', 'garden'),
       make('Wall', 'stone'), make('Hook', 'stone'), make('Corner', 'crystal'),
-      make('Slab', 'ember'), make('Pebble', 'ember'), make('Tee', 'stone'),
+      make('Slab', 'ember'), make('Slab', 'arc'), make('Tee', 'stone'),
     ],
   },
   quarryman: {

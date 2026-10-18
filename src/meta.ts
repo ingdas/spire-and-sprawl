@@ -56,6 +56,8 @@ export interface RunStats {
   maxChain: number;
   calderaNights: number;
   maxUniques: number;
+  /** damage dealt to enemies by source: turret material, 'topple', 'unique', 'core', 'other' */
+  dmgBy?: Record<string, number>;
 }
 
 export interface CodexDef {
@@ -102,15 +104,15 @@ export const CODEX: CodexDef[] = [
 
 /** Heat: optional stacking difficulty after your first win. Each level adds its rule to all below it. */
 export const HEATS = [
-  'Enemies have +20% HP.',
+  'Enemies have +15% HP.',
   'Start with 3 less gold and 3 less core HP.',
-  'Elites appear from night 2, twice as often.',
-  'Act guardians have +50% HP.',
+  'Elites appear from night 2, three times as often.',
+  'Act guardians have double HP.',
   'Treasure spots on the map become events.',
   'Shops, relics and the premium shelf cost 25% more.',
-  'Enemies chew through blocks 25% faster.',
-  'You start each night with one topple fewer.',
-  'On journeys, towers lose everything above 8 high (not 10).',
+  'Enemies move 15% faster.',
+  'Every night brings 5% more enemies.',
+  'Fliers come from the first night, and 50% more often.',
   'The final boss gets back up once, with half its HP.',
 ];
 
@@ -230,7 +232,7 @@ export class Meta {
   }
 
   matPool(): MatId[] {
-    const m: MatId[] = ['stone', 'garden', 'crystal', 'ember'];
+    const m: MatId[] = ['stone', 'garden', 'crystal', 'ember', 'arc'];
     if (this.has('first_light')) m.push('ward');
     if (this.has('needle')) m.push('beacon');
     return m;

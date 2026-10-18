@@ -1,0 +1,6 @@
+{
+  "name": "baseline",
+  "runs": 20,
+  "metas": ["none", "mid"],
+  "workers": 8
+}
