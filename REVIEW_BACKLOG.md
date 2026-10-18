@@ -39,17 +39,17 @@ The rest is polish, and there's a lot of it. It's listed below.
 | # | Problem (evidence) | Change | Pri | Size |
 |---|---|---|---|---|
 | ✅ 12 | Enemies are tiny next to the blocks, and shards look like the pink attack arrow and the floating rocks. | Scale enemies up about 30%, give each type an outline colour by threat tier, and recolour the attack arrows so they never share enemy colours. | P1 | S |
-| 13 | Turret shots are hairlines. You can't see who is doing the work. | Thicker beams with a muzzle flash, shells with a trail, and hit sparks on enemies. Each turret type should have its own effect shape. | P1 | M |
+| ✅ 13 | Turret shots are hairlines. You can't see who is doing the work. | Thicker beams with a muzzle flash, shells with a trail, and hit sparks on enemies. Each turret type should have its own effect shape. | P1 | M |
 | ✅ 14 | When the core loses HP there's no indication which enemy did it or from where (night 9: 8 HP gone, unexplained). | Arrow at the screen edge pointing to the hit direction, plus a floating "−2 Brute" at the core. The end screen lists *what dealt core damage* (the sim already tracks it per type). | P1 | S |
 | ✅ 15 | You can't see where enemies will walk, which is the whole point of placing walls. | In the day, faintly animate the path from each attacking side to the core, based on the current board. It updates live as you place pieces. | P1 | M |
 | ✅ 16 | Turret ranges are only visible when you hover in the day. | At night, holding a key (or the "eye" button on phones) shows all turret ranges and the slow fields. | P2 | S |
 | ✅ 17 | Tall towers poke out behind the top bar (nights 3, 7 and 9), and the core gets hidden behind blocks (day 1, after building). | The camera auto-frames to keep the tallest tower and the core in view. When something blocks the core, show its outline through the blocks (x-ray). | P1 | M |
-| 18 | Enemies off-screen or behind towers are invisible. | Edge-of-screen markers for off-screen enemies, and x-ray outlines for enemies behind blocks. | P2 | M |
+| ✅ 18 | Enemies off-screen or behind towers are invisible. | Edge-of-screen markers for off-screen enemies, and x-ray outlines for enemies behind blocks. | P2 | M |
 | ✅ 19 | The burrowing wyrm is invisible while underground, and the boss bar just says "UNDERGROUND!". | Show a moving dirt ripple and crack trail on the ground while it tunnels, and a warning circle where it will come up. | P1 | S |
-| 20 | Fog has no visual effect (night 7 fog looked identical to a clear night). Full moon has none either. | Fog: real volumetric-looking fog with turret ranges drawn shorter. Moon: a big moon in the sky and a silver tint. Storm: rain streaks and a dark sky. Each weather should change how the scene looks. | P2 | M |
-| 21 | Biome identity disappears at night: Dunes, Glacier and Meadow nights all look the same purple. | Give each biome its own night palette (Dunes: deep teal and amber, Glacier: icy blue and white, Caldera: black and glowing red). | P2 | S |
+| ✅ 20 | Fog has no visual effect (night 7 fog looked identical to a clear night). Full moon has none either. | Fog: real volumetric-looking fog with turret ranges drawn shorter. Moon: a big moon in the sky and a silver tint. Storm: rain streaks and a dark sky. Each weather should change how the scene looks. | P2 | M |
+| ✅ 21 | Biome identity disappears at night: Dunes, Glacier and Meadow nights all look the same purple. | Give each biome its own night palette (Dunes: deep teal and amber, Glacier: icy blue and white, Caldera: black and glowing red). | P2 | S |
 | ✅ 22 | Enemy HP bars are small slivers. | Larger bars, and only on enemies that are damaged and near your towers. Boss and elite bars get their own style. | P3 | S |
-| 23 | When a guardian arrives there's no build-up; it just walks in. | Guardian intro: the camera pans to the spawn side, a slow-motion beat, and a name card. Only the first time per run. | P2 | M |
+| ✅ 23 | When a guardian arrives there's no build-up; it just walks in. | Guardian intro: the camera pans to the spawn side, a slow-motion beat, and a name card. Only the first time per run. | P2 | M |
 
 ## C. Night-time agency and pacing
 
@@ -62,7 +62,7 @@ The rest is polish, and there's a lot of it. It's listed below.
 | ✅ 28 | Night speed resets to 1× every night. | Remember the chosen speed. Add an explicit pause button (and Esc/P to pause) with the board still inspectable while paused. | P1 | S |
 | ✅ 29 | Nights end abruptly and cut to the morning sheet. | A short "Night survived" moment: a dawn light sweep and a tally (enemies, damage taken, best topple), then the sheet. | P2 | S |
 | ✅ 30 | Night 1 is trivial (6 shards). Bounty nights can double the count (night 7: 42 enemies). | Smooth the curve. Night 1 should teach one thing (a wall). Cap bounty at +30% enemies but give elites; show the difficulty on the map node (item 39). | P1 | S |
-| 31 | Enemy spawns have no source, they just appear at the edge. | Spawn gates on each attacking side: a portal or tear that opens at dusk and closes when the wave is done. | P3 | M |
+| ✅ 31 | Enemy spawns have no source, they just appear at the edge. | Spawn gates on each attacking side: a portal or tear that opens at dusk and closes when the wave is done. | P3 | M |
 
 ## D. Economy and decisions
 
@@ -117,7 +117,7 @@ The rest is polish, and there's a lot of it. It's listed below.
 | 63 | Runs can't be resumed: closing the tab loses the run. | Autosave at every morning (run state to localStorage), and a "Continue" option on the title. | P1 | M |
 | 64 | No settings: volume, music, camera speed, reduced motion and the default night speed can't be changed. | A settings sheet on the title screen and the pause menu. | P2 | M |
 | 65 | There's no music, only sound effects. | Day and night music tracks that crossfade at dusk, plus a boss layer. | P2 | M |
-| 66 | Journeys are just a sheet of text, even though the island flies to a new land. | A 3-second cutscene: the camera pulls back, the island lifts and clouds rush past, then it lands in the new biome's colours. | P2 | M |
+| ✅ 66 | Journeys are just a sheet of text, even though the island flies to a new land. | A 3-second cutscene: the camera pulls back, the island lifts and clouds rush past, then it lands in the new biome's colours. | P2 | M |
 | 67 | Only 5 founders, and the first is forced on a new player. | Make founder differences bigger: each has a starting relic and a signature unique block. | P3 | M |
 | ✅ 68 | Portrait phone framing cuts off the island's sides, and the top bar drops Tallest and Area, which matter for tall vs wide. | Zoom the portrait camera out to fit, and show Tallest and Area as small chips under the top bar. | P1 | S |
 | ✅ 69 | On phones the hand and actions take a third of the screen, and the night buttons wrap to two rows. | A single-row night bar with icon buttons, and a collapsible hand that can be swiped down. | P2 | M |

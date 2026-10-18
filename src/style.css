@@ -698,3 +698,15 @@ body.paused::after { content: 'Paused'; position: fixed; top: 96px; left: 50%; t
 @keyframes consumeOut { 0% { opacity: 1; transform: translateY(-14px); } 45% { opacity: 0.9; transform: translateY(-40px) scale(0.92); } 100% { opacity: 0; transform: translateY(-60px) scale(0.8); width: 0; padding: 0; margin: 0 -4px; border-width: 0; } }
 /* 61: the title card sits to the side so the island shows */
 @media (min-width: 980px) { .cover { justify-self: start; margin-left: 7vw; width: min(560px, 100%); } .cover h1 { font-size: 100px; } }
+
+/* each land has its own night sky; weather tints it further */
+body.night[data-biome='dunes'] { --sky-a: #13283a; --sky-b: #7a5230; }
+body.night[data-biome='glacier'] { --sky-a: #0e2244; --sky-b: #4f74a8; }
+body.night[data-biome='caldera'] { --sky-a: #150c12; --sky-b: #7a2416; }
+body.night[data-weather='storm'] { --sky-a: #0b1020; --sky-b: #2c364c; }
+body.night[data-weather='fog'] { --sky-a: #2a2742; --sky-b: #5a5478; }
+body.night[data-weather='moon'] { --sky-a: #182040; --sky-b: #6a6aa0; }
+
+/* enemies off screen */
+#edgemarks { position: fixed; inset: 0; pointer-events: none; z-index: 7; }
+#edgemarks i { position: absolute; left: 0; top: 0; width: 0; height: 0; margin: -8px 0 0 -8px; border: 8px solid transparent; border-left: 13px solid #ff5470; filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.6)); }

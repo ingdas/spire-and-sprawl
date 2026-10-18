@@ -521,7 +521,7 @@ export class Night {
         const tgt = this.nearestTarget(tu.x, tu.y, tu.range, tu.hitsAir);
         if (!tgt) { tu.cd = 0.1; continue; }
         const dmg = TURRET.crystal.dmg * tu.dmgMult * this.hooks.mods.crystal;
-        this.r.beam(from, this.enemyWorld(tgt), 0x9ff3ff);
+        this.r.shot(from, this.enemyWorld(tgt), 0x9ff3ff);
         this.damage(tgt, dmg);
         if (tu.react === 'frost') tgt.chill = 1.5;
         if (tu.react === 'sparks') {
@@ -560,6 +560,7 @@ export class Night {
       p.y += Math.sin(k * Math.PI) * (1.4 + s.from.distanceTo(s.to) * 0.15);
       s.mesh.position.copy(p);
       s.mesh.scale.setScalar(Math.min(1, 0.25 + k * 6));
+      if (Math.floor(s.t * 30) !== Math.floor((s.t - dt) * 30)) this.r.trail(p, 0xff8a3a);
       s.mesh.rotation.x += dt * 12;
       s.mesh.rotation.z += dt * 7;
       if (k >= 1) {

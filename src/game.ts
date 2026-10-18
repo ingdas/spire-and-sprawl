@@ -113,6 +113,9 @@ export class Game {
   private dropping = false;
   private aim: Aim = 'first';
   private paused = false;
+  private flying = false;
+  /** seconds of slow motion left (a boss arriving) */
+  private slowmo = 0;
   /** a tactical nudge, e.g. when a topple would crush a crowd */
   private nightTip = '';
   private showAllRanges = false;
@@ -154,8 +157,10 @@ export class Game {
     let simDt = dt;
     if (this.phase === 'title') this.r.autoOrbit(dt);
     if (this.phase === 'night' && this.night && this.run) {
-      simDt = this.paused ? 0 : dt * this.speed;
-      for (let i = 0; i < (this.paused ? 0 : this.speed) && this.phase === 'night'; i++) this.night.update(dt);
+      this.slowmo = Math.max(0, this.slowmo - dt);
+      const slow = this.slowmo > 0 ? 0.35 : 1;
+      simDt = this.paused ? 0 : dt * this.speed * slow;
+      for (let i = 0; i < (this.paused ? 0 : this.speed) && this.phase === 'night'; i++) this.night.update(dt * slow);
       this.r.tintBlocks(this.run.board);
       this.updateNightHud();
       // enemies move under the aim, so refresh the crush preview a few times a second
@@ -366,6 +371,17 @@ export class Game {
   /** The island is carried to the next biome: pay the travel damage, land, read the new rules. */
   private showJourney() {
     const run = this.run!;
+    // the flight: clouds rush past, then the new land's sheet
+    if (!this.flying) {
+      this.flying = true;
+      this.overlay('');
+      this.r.journeyFx(2.6);
+      sfx.nightStart();
+      this.banner('The island takes off', 'Journey', `to ${BIOMES[run.route[actOf(run.day)]].name}`);
+      setTimeout(() => { this.showJourney(); }, 2300);
+      return;
+    }
+    this.flying = false;
     run.act = actOf(run.day);
     const b = this.biome;
     const lost = run.board.journeyDamage(JOURNEY_MAX_H);
@@ -473,7 +489,15 @@ export class Game {
       },
       boardChanged: () => { this.r.syncBoard(run.board); this.trackStats(); },
     });
-    this.banner(`${run.day} of ${NIGHTS}`, 'Night', run.wave.guardian ? `the ${ENEMIES[run.wave.guardian].name.toLowerCase()} is coming` : `attack from the ${run.wave.sides.map(s => SIDE_NAMES[s]).join(' & ')}`);
+    this.r.setWeather(run.wave.weather);
+    this.r.setGates(run.wave.sides);
+    // a boss arrives with ceremony: the camera turns to its gate and time slows for a moment
+    if (run.wave.guardian) {
+      const s = run.wave.sides[0], d = (N - 1) / 2 + 1.4;
+      this.r.cinematic([new THREE.Vector3(0, 1.5, -d), new THREE.Vector3(d, 1.5, 0), new THREE.Vector3(0, 1.5, d), new THREE.Vector3(-d, 1.5, 0)][s], 3.2);
+      this.slowmo = 3;
+    }
+    this.banner(`${run.day} of ${NIGHTS}`, run.wave.guardian ? ENEMIES[run.wave.guardian].name : 'Night', run.wave.guardian ? `the ${ENEMIES[run.wave.guardian].name.toLowerCase()} is coming` : `attack from the ${run.wave.sides.map(s => SIDE_NAMES[s]).join(' & ')}`);
     this.renderHud();
   }
 
@@ -780,6 +804,9 @@ export class Game {
     this.phase = 'dawn';
     this.r.setNight(false);
     this.r.setTelegraph([]);
+    this.r.setWeather(null);
+    this.r.setGates([]);
+    this.clearEdgeMarks();
     sfx.dawn();
     // fountains repair their surroundings
     for (const f of [...run.board.blocks()].filter(b => b.b.mat === 'fountain')) {
@@ -1440,9 +1467,34 @@ export class Game {
       <div class="remain" id="remaining"></div>`;
   }
 
+  /** Arrows on the screen edge for enemies the camera can't see. */
+  private edgeMarks() {
+    const n = this.night;
+    const box = $('edgemarks');
+    if (!n) return;
+    const W = window.innerWidth, H = window.innerHeight, pad = 26;
+    let k = 0;
+    for (const e of n.enemies) {
+      if (e.dead || e.hidden) continue;
+      const p = this.r.project(e.view.root.position);
+      if (p.x > 0 && p.x < W && p.y > 0 && p.y < H) continue;
+      const cx = W / 2, cy = H / 2, a = Math.atan2(p.y - cy, p.x - cx);
+      const t = Math.min((W / 2 - pad) / Math.abs(Math.cos(a) || 1e-6), (H / 2 - pad) / Math.abs(Math.sin(a) || 1e-6));
+      let m = box.children[k] as HTMLElement | undefined;
+      if (!m) { m = document.createElement('i'); box.appendChild(m); }
+      m.style.transform = `translate(${cx + Math.cos(a) * t}px, ${cy + Math.sin(a) * t}px) rotate(${a}rad)`;
+      m.style.display = '';
+      k++;
+    }
+    for (let i = k; i < box.children.length; i++) (box.children[i] as HTMLElement).style.display = 'none';
+  }
+
+  private clearEdgeMarks() { $('edgemarks').innerHTML = ''; }
+
   private updateNightHud() {
     const n = this.night;
     if (!n) return;
+    this.edgeMarks();
     const el = document.getElementById('remaining');
     if (el) el.innerHTML = `<span class="label">Enemies left</span><b>${n.remaining}</b>`;
     const boss = n.bossRef;

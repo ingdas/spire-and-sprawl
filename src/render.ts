@@ -73,6 +73,10 @@ const GEO = {
   rangeRing: new THREE.RingGeometry(0.96, 1, 72),
   disc: new THREE.CircleGeometry(1, 48),
   beam: new THREE.CylinderGeometry(0.045, 0.045, 1, 6),
+  bolt: new THREE.CylinderGeometry(0.075, 0.075, 1, 6),
+  flash: new THREE.IcosahedronGeometry(0.22, 0),
+  spark: new THREE.BoxGeometry(0.07, 0.07, 0.07),
+  gate: new THREE.TorusGeometry(0.95, 0.1, 8, 32),
   shell: new THREE.IcosahedronGeometry(0.13, 0),
   debris: new THREE.TetrahedronGeometry(0.12),
   strut: new THREE.BoxGeometry(0.98, 0.09, 0.98),
@@ -185,7 +189,7 @@ interface BlockView {
 /** A block on its way out: either popping in place or (toss) swinging off the edge and dropping away. */
 interface Dying { mesh: THREE.Mesh; mat: THREE.MeshToonMaterial; t: number; toss?: { pos: THREE.Vector3; tip: Tip | null; vy: number }; quiet?: number }
 
-interface Fx { obj: THREE.Object3D; life: number; max: number; vel?: THREE.Vector3; spin?: number; kind: 'debris' | 'fade' | 'ring' | 'float' | 'puff'; grow?: number }
+interface Fx { obj: THREE.Object3D; life: number; max: number; vel?: THREE.Vector3; spin?: number; kind: 'debris' | 'fade' | 'ring' | 'float' | 'puff' | 'spark' | 'flash' | 'cloud'; grow?: number }
 
 export interface EnemyView {
   root: THREE.Group; body: THREE.Mesh; mat: THREE.MeshToonMaterial; hpBar: THREE.Group; hpFill: THREE.Mesh; hpLag: THREE.Mesh;
@@ -218,6 +222,15 @@ export class Renderer {
   private paths: { pts: THREE.Vector3[]; len: number[]; total: number }[] = [];
   private pathMarks: THREE.InstancedMesh | null = null;
   private coreXray: THREE.Mesh;
+  /** weather on screen: fog, rain or a moon */
+  private weather: string | null = null;
+  private fogK = 0;
+  private rain: THREE.LineSegments | null = null;
+  private moon: THREE.Group | null = null;
+  private gateRoot = new THREE.Group();
+  /** a short camera move toward a point of interest (a boss, a journey) */
+  private cine: { point: THREE.Vector3; t: number; dur: number; pull: number } | null = null;
+  private cineApplied = new THREE.Vector3();
   private coreSq = 0;
   private coreSqv = 0;
   private blockRoot = new THREE.Group();
@@ -283,7 +296,7 @@ export class Renderer {
     this.coreXray.renderOrder = 30;
     this.coreXray.raycast = noRaycast;
     this.coreGem.add(this.coreXray);
-    this.scene.add(this.core, this.blockRoot, this.ghostRoot, this.ringRoot, this.telegraphRoot, this.validRoot, this.linkRoot, this.pathRoot);
+    this.scene.add(this.core, this.blockRoot, this.ghostRoot, this.ringRoot, this.telegraphRoot, this.validRoot, this.linkRoot, this.pathRoot, this.gateRoot);
 
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -834,6 +847,11 @@ export class Renderer {
     const mat = toon(def.color);
     const body = outlined(ENEMY_GEO[type], mat, type === 'boss' ? 0.1 : 0.05);
     root.add(body);
+    // a faint silhouette drawn over everything, so enemies behind towers never vanish
+    const ghost = new THREE.Mesh(ENEMY_GEO[type], new THREE.MeshBasicMaterial({ color: def.color, transparent: true, opacity: 0.3, depthTest: false, depthWrite: false }));
+    ghost.renderOrder = 26;
+    ghost.raycast = noRaycast;
+    body.add(ghost);
     if (type === 'boss') {
       for (let i = 0; i < 4; i++) {
         const o = outlined(new THREE.TetrahedronGeometry(0.25), toon(0xe8475e), 0.04);
@@ -941,6 +959,136 @@ export class Renderer {
     m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
     this.scene.add(m);
     this.fxList.push({ obj: m, life: 0.12, max: 0.12, kind: 'fade' });
+  }
+
+  /** A turret shot: muzzle flash, a thick bolt, sparks where it lands. */
+  shot(from: THREE.Vector3, to: THREE.Vector3, color: number) {
+    const m = new THREE.Mesh(GEO.bolt, new THREE.MeshBasicMaterial({ color, transparent: true }));
+    const d = to.clone().sub(from);
+    m.position.copy(from).addScaledVector(d, 0.5);
+    m.scale.set(1, d.length(), 1);
+    m.quaternion.setFromUnitVectors(UP, d.clone().normalize());
+    this.scene.add(m);
+    this.fxList.push({ obj: m, life: 0.14, max: 0.14, kind: 'fade' });
+    const f = new THREE.Mesh(GEO.flash, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true }));
+    f.position.copy(from);
+    this.scene.add(f);
+    this.fxList.push({ obj: f, life: 0.12, max: 0.12, kind: 'flash' });
+    this.spark(to, color, 3);
+  }
+
+  /** Bright chips flying off a hit. */
+  spark(pos: THREE.Vector3, color: number, n: number) {
+    for (let i = 0; i < n; i++) {
+      const m = new THREE.Mesh(GEO.spark, new THREE.MeshBasicMaterial({ color, transparent: true }));
+      m.position.copy(pos);
+      const vel = new THREE.Vector3((Math.random() - 0.5) * 4, 1 + Math.random() * 3, (Math.random() - 0.5) * 4);
+      this.scene.add(m);
+      this.fxList.push({ obj: m, life: 0.3, max: 0.3, vel, kind: 'spark' });
+    }
+  }
+
+  /** A fading ember left behind a flying shell. */
+  trail(pos: THREE.Vector3, color: number) {
+    const m = new THREE.Mesh(GEO.flash, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, depthWrite: false }));
+    m.position.copy(pos);
+    m.scale.setScalar(0.5);
+    this.scene.add(m);
+    this.fxList.push({ obj: m, life: 0.3, max: 0.3, kind: 'puff', vel: new THREE.Vector3() });
+  }
+
+  /** Weather you can see: fog rolls in, rain falls, a big moon rises. */
+  setWeather(w: string | null) {
+    this.weather = w;
+    document.body.dataset.weather = w ?? '';
+    if (w === 'storm' && !this.rain) {
+      const n = 700, pts = new Float32Array(n * 6);
+      for (let i = 0; i < n; i++) {
+        const x = (Math.random() - 0.5) * 26, y = Math.random() * 22, z = (Math.random() - 0.5) * 26;
+        pts.set([x, y, z, x + 0.08, y - 0.6, z + 0.04], i * 6);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+      this.rain = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xbfd4ff, transparent: true, opacity: 0, depthWrite: false }));
+      this.rain.raycast = noRaycast;
+      this.scene.add(this.rain);
+    }
+    if (w === 'moon' && !this.moon) {
+      this.moon = new THREE.Group();
+      const disc = new THREE.Mesh(new THREE.SphereGeometry(3, 24, 16), new THREE.MeshBasicMaterial({ color: 0xf6f0d2, transparent: true, opacity: 0, fog: false }));
+      const halo = new THREE.Mesh(new THREE.SphereGeometry(4.6, 24, 16), new THREE.MeshBasicMaterial({ color: 0xf6f0d2, transparent: true, opacity: 0, side: THREE.BackSide, fog: false }));
+      halo.userData.halo = true;
+      this.moon.add(disc, halo);
+      this.moon.position.set(-26, 20, -26);
+      this.scene.add(this.moon);
+    }
+  }
+
+  private updateWeather(dt: number) {
+    const fogOn = this.weather === 'fog' ? 1 : 0;
+    this.fogK += (fogOn - this.fogK) * Math.min(1, dt * 1.5);
+    if (this.fogK > 0.01) {
+      if (!this.scene.fog) this.scene.fog = new THREE.Fog(0x3a3460, 30, 80);
+      const f = this.scene.fog as THREE.Fog;
+      f.near = 30 - this.fogK * 14;
+      f.far = 80 - this.fogK * 46;
+    } else if (this.scene.fog) this.scene.fog = null;
+    if (this.rain) {
+      const m = this.rain.material as THREE.LineBasicMaterial;
+      m.opacity += ((this.weather === 'storm' ? 0.55 : 0) - m.opacity) * Math.min(1, dt * 2);
+      const p = this.rain.geometry.attributes.position as THREE.BufferAttribute;
+      for (let i = 0; i < p.count; i += 2) {
+        let y = p.getY(i) - dt * 26;
+        if (y < -1) y += 22;
+        p.setY(i, y);
+        p.setY(i + 1, y - 0.6);
+      }
+      p.needsUpdate = true;
+      if (m.opacity < 0.01 && this.weather !== 'storm') { this.scene.remove(this.rain); disposeTree(this.rain); this.rain = null; }
+    }
+    if (this.moon) {
+      const on = this.weather === 'moon' ? 1 : 0;
+      for (const c of this.moon.children) {
+        const m = (c as THREE.Mesh).material as THREE.MeshBasicMaterial;
+        m.opacity += ((c.userData.halo ? 0.18 : 0.95) * on - m.opacity) * Math.min(1, dt * 1.5);
+      }
+      const disc = (this.moon.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+      if (!on && disc.opacity < 0.01) { this.scene.remove(this.moon); disposeTree(this.moon); this.moon = null; }
+    }
+  }
+
+  /** Swirling gates open on the attacking sides at dusk and close at dawn. */
+  setGates(sides: number[]) {
+    for (const g of this.gateRoot.children) g.userData.leave ??= 0;
+    for (const s of sides) {
+      const d = C + 2.2;
+      const pos = [new THREE.Vector3(0, 2.4, -d), new THREE.Vector3(d, 2.4, 0), new THREE.Vector3(0, 2.4, d), new THREE.Vector3(-d, 2.4, 0)][s];
+      const ring = outlined(GEO.gate, toon(0xc04aff, { emissive: 0x6a1a9a }), 0.04, false);
+      ring.position.copy(pos);
+      ring.rotation.y = s % 2 ? Math.PI / 2 : 0;
+      ring.userData.age = 0;
+      const core = new THREE.Mesh(new THREE.CircleGeometry(0.88, 32), new THREE.MeshBasicMaterial({ color: 0x2a0a40, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false }));
+      ring.add(core);
+      this.gateRoot.add(ring);
+    }
+  }
+
+  /** Swing the camera toward a point for a moment, then back. */
+  cinematic(point: THREE.Vector3, dur: number, pull = 0.55) { this.cine = { point, t: 0, dur, pull }; }
+
+  /** The island flies to a new land: clouds rush past and the camera rises. */
+  journeyFx(dur: number) {
+    this.cinematic(new THREE.Vector3(0, 9, 0), dur, 0.8);
+    for (let i = 0; i < 26; i++) {
+      const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1.4 + Math.random() * 1.8, 1), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
+      const a = Math.random() * Math.PI * 2, r = 9 + Math.random() * 9;
+      m.position.set(Math.cos(a) * r, 16 + Math.random() * 14, Math.sin(a) * r);
+      m.scale.set(1.6, 0.8, 1.2);
+      this.scene.add(m);
+      const life = dur * (0.6 + Math.random() * 0.4);
+      this.fxList.push({ obj: m, life, max: life, vel: new THREE.Vector3(0, -(22 + Math.random() * 10), 0), kind: 'cloud' });
+    }
+    this.shakeCam(0.4);
   }
 
   lightning(from: THREE.Vector3, to: THREE.Vector3) {
@@ -1140,6 +1288,18 @@ export class Renderer {
     }
     this.placeGhost(realDt);
     this.updatePaths(realDt);
+    this.updateWeather(realDt);
+    for (const g of [...this.gateRoot.children]) {
+      g.rotation.z += realDt * 1.5;
+      if (g.userData.leave !== undefined) {
+        g.userData.leave += realDt / 0.4;
+        g.scale.setScalar(Math.max(0.001, 1 - easeInCubic(clamp01(g.userData.leave))));
+        if (g.userData.leave >= 1) { disposeTree(g); this.gateRoot.remove(g); }
+      } else {
+        g.userData.age += realDt;
+        g.scale.setScalar(Math.max(0.001, easeOutBack(clamp01(g.userData.age / 0.6))));
+      }
+    }
     for (const l of this.linkRoot.children) ((l as THREE.LineSegments).material as THREE.LineBasicMaterial).opacity = 0.45 + Math.sin(t * 4) * 0.25;
     for (const l of this.validRoot.children) {
       l.userData.age += realDt;
@@ -1218,7 +1378,7 @@ export class Renderer {
 
     for (let i = this.fxList.length - 1; i >= 0; i--) {
       const f = this.fxList[i];
-      f.life -= simDt;
+      f.life -= f.kind === 'cloud' ? realDt : simDt;
       const k = Math.max(0, f.life / f.max);
       if (f.kind === 'debris' && f.vel) {
         f.vel.y -= 14 * simDt;
@@ -1237,6 +1397,16 @@ export class Renderer {
         f.obj.scale.set(1.2 * pop * (f.obj.userData.w ?? 1), 0.6 * pop, 1);
         f.obj.position.y += realDt * 2.4 * k;
         (f.obj as THREE.Sprite).material.opacity = Math.min(1, k * 2.5);
+      } else if (f.kind === 'spark' && f.vel) {
+        f.vel.y -= 12 * simDt;
+        f.obj.position.addScaledVector(f.vel, simDt);
+        f.obj.scale.setScalar(Math.max(0.001, k));
+      } else if (f.kind === 'flash') {
+        f.obj.scale.setScalar(1 + (1 - k) * 1.5);
+        ((f.obj as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = k;
+      } else if (f.kind === 'cloud' && f.vel) {
+        f.obj.position.addScaledVector(f.vel, realDt);
+        ((f.obj as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = Math.min(0.75, (1 - k) * 4, k * 3);
       } else if (f.kind === 'puff' && f.vel) {
         f.vel.multiplyScalar(Math.exp(-simDt * 5));
         f.obj.position.addScaledVector(f.vel, simDt);
@@ -1272,6 +1442,18 @@ export class Renderer {
     const ty = this.controls.target.y;
     this.controls.target.y += (this.focusY - ty) * Math.min(1, realDt * 2);
     this.camera.position.y += this.controls.target.y - ty;
+    // cinematic: ease toward the point of interest and back, moving the camera with its target
+    let want = new THREE.Vector3();
+    if (this.cine) {
+      this.cine.t += realDt;
+      const k = Math.sin(Math.PI * clamp01(this.cine.t / this.cine.dur));
+      want = this.cine.point.clone().sub(this.controls.target).add(this.cineApplied).multiplyScalar(k * this.cine.pull);
+      if (this.cine.t >= this.cine.dur) { this.cine = null; want.set(0, 0, 0); }
+    }
+    const delta = want.clone().sub(this.cineApplied);
+    this.controls.target.add(delta);
+    this.camera.position.add(delta);
+    this.cineApplied.copy(want);
     this.controls.update();
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - realDt);
@@ -1299,6 +1481,8 @@ export class Renderer {
 
   /** Wipe the board for a new run: everything leaves in a ripple from the centre instead of vanishing. */
   clearAll() {
+    this.setWeather(null);
+    this.setGates([]);
     for (const v of this.blockViews.values()) {
       this.blockRoot.remove(v.mesh);
       v.mesh.visible = true;
