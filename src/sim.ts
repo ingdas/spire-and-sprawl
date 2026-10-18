@@ -141,17 +141,22 @@ interface Enemy {
 interface Turret { x: number; y: number; z: number; b: Block; mat: MatId; range: number; dmgMult: number; cdMult: number; cd: number; hitsAir: boolean; stack: number; react: Reaction | null }
 
 /** Material reactions between touching blocks (sides, above or below). */
-export type Reaction = 'frost' | 'smoke' | 'sparks';
-export const REACTIONS: Record<Reaction, { name: string; desc: string }> = {
-  frost: { name: 'Frost beam', desc: 'crystal touching ward: beams slow enemies' },
-  smoke: { name: 'Smoke shells', desc: 'ember touching garden: shells slow enemies' },
-  sparks: { name: 'Spark beam', desc: 'crystal touching ember: beams splash fire' },
+export type Reaction = 'frost' | 'smoke' | 'sparks' | 'bloom' | 'wildfire' | 'shrapnel' | 'bramble' | 'deepchill' | 'glint';
+/** Combos: a turret touching (side, above or below) a certain block gets a twist. First match wins. */
+export const REACTIONS: Record<Reaction, { name: string; desc: string; turret: MatId; with: MatId; icon: string }> = {
+  frost: { name: 'Frost beam', desc: 'crystal touching ward: beams slow enemies', turret: 'crystal', with: 'ward', icon: '❄' },
+  sparks: { name: 'Spark beam', desc: 'crystal touching ember: beams splash fire', turret: 'crystal', with: 'ember', icon: '✸' },
+  bloom: { name: 'Bloom beam', desc: 'crystal touching garden: every kill drops 1 gold', turret: 'crystal', with: 'garden', icon: '❀' },
+  glint: { name: 'Glint beam', desc: 'crystal touching beacon: beams pierce to a second enemy', turret: 'crystal', with: 'beacon', icon: '✦' },
+  smoke: { name: 'Smoke shells', desc: 'ember touching garden: shells slow enemies', turret: 'ember', with: 'garden', icon: '☁' },
+  wildfire: { name: 'Wildfire', desc: 'ember touching ward: shells leave burning ground', turret: 'ember', with: 'ward', icon: '♨' },
+  shrapnel: { name: 'Shrapnel', desc: 'ember touching stone: +30% blast radius', turret: 'ember', with: 'stone', icon: '✱' },
+  bramble: { name: 'Brambles', desc: 'ward touching garden: enemies in the field take damage', turret: 'ward', with: 'garden', icon: '♣' },
+  deepchill: { name: 'Deep chill', desc: 'ward touching crystal: the field slows much harder', turret: 'ward', with: 'crystal', icon: '❅' },
 };
 
 export function reactionOf(mat: MatId, touching: Set<MatId>): Reaction | null {
-  if (mat === 'crystal' && touching.has('ward')) return 'frost';
-  if (mat === 'crystal' && touching.has('ember')) return 'sparks';
-  if (mat === 'ember' && touching.has('garden')) return 'smoke';
+  for (const [id, r] of Object.entries(REACTIONS) as [Reaction, (typeof REACTIONS)[Reaction]][]) if (r.turret === mat && touching.has(r.with)) return id;
   return null;
 }
 
@@ -171,9 +176,9 @@ export function stackBelow(board: Board, x: number, y: number, z: number): numbe
   return n;
 }
 
-interface Shell { mesh: THREE.Mesh; from: THREE.Vector3; to: THREE.Vector3; t: number; dur: number; dmg: number; radius: number; smoke: boolean }
+interface Shell { mesh: THREE.Mesh; from: THREE.Vector3; to: THREE.Vector3; t: number; dur: number; dmg: number; radius: number; smoke: boolean; fire: boolean }
 
-export interface Mods { crystal: number; ember: number; range: number; crystalRange: number }
+export interface Mods { crystal: number; ember: number; range: number; crystalRange: number; wardRange?: number }
 
 /** Range bonus a turret of this material gets from workshop + biome. */
 export const rangeBonus = (m: Mods, mat: MatId) => m.range + (mat === 'crystal' ? m.crystalRange : 0);
@@ -221,6 +226,8 @@ export class Night {
   private omens: { x: number; y: number }[] = [];
   /** lingering slow fields left by toppled ward blocks */
   private zones: { x: number; y: number; r: number; t: number }[] = [];
+  /** burning ground from wildfire shells */
+  private fires: { x: number; y: number; r: number; t: number; dps: number }[] = [];
   private ventCd = 6;
   done = false;
   bossRef: Enemy | null = null;
@@ -304,7 +311,7 @@ export class Night {
       dmgMult += STACK_BONUS * stack;
       const cdMult = (has('focus_lens') && blk.mat === 'crystal' ? 1 / 1.35 : 1) * (blk.mat === 'crystal' && touching.has('mirror') ? 1 / 1.6 : 1);
       this.turrets.push({
-        x, y, z, b: blk, mat: blk.mat, range: range + (blk.mat === 'ward' ? 0.3 * stack : 0), dmgMult, cdMult, stack,
+        x, y, z, b: blk, mat: blk.mat, range: range + (blk.mat === 'ward' ? 0.3 * stack + (this.hooks.mods.wardRange ?? 0) : 0), dmgMult, cdMult, stack,
         cd: Math.random() * 0.5, hitsAir: blk.mat !== 'ember' && z >= 1, react: reactionOf(blk.mat, touching),
       });
     }
@@ -481,7 +488,9 @@ export class Night {
       if (tu.mat !== 'ward') continue;
       for (const e of this.enemies) {
         if (e.mode === 'fly' && !tu.hitsAir) continue;
-        if (Math.hypot(e.pos.x - tu.x, e.pos.y - tu.y) <= tu.range) e.slow = Math.max(e.slow, TURRET.ward.slow);
+        if (Math.hypot(e.pos.x - tu.x, e.pos.y - tu.y) > tu.range) continue;
+        e.slow = Math.max(e.slow, tu.react === 'deepchill' ? 0.65 : TURRET.ward.slow);
+        if (tu.react === 'bramble' && e.mode !== 'fly') this.damage(e, 0.9 * this.wave.hpScale * dt);
       }
       if (pulse && this.enemies.length) this.r.ring(world(tu.x, tu.y, 0.06), tu.range, MATS.ward.color, 0.9);
     }
@@ -492,6 +501,11 @@ export class Night {
       for (const e of this.enemies) if (e.mode !== 'fly' && Math.hypot(e.pos.x - z.x, e.pos.y - z.y) <= z.r) e.slow = Math.max(e.slow, 0.5);
     }
     this.zones = this.zones.filter(z => z.t > 0);
+    for (const f of this.fires) {
+      f.t -= dt;
+      for (const e of this.enemies) if (e.mode !== 'fly' && Math.hypot(e.pos.x - f.x, e.pos.y - f.y) <= f.r) this.damage(e, f.dps * dt);
+    }
+    this.fires = this.fires.filter(f => f.t > 0);
     // chilled by frost beams or smoke shells
     for (const e of this.enemies) if (e.chill > 0) { e.chill -= dt; e.slow = Math.max(e.slow, 0.4); }
     // bells stun everything on the ground in earshot
@@ -521,8 +535,14 @@ export class Night {
         const tgt = this.nearestTarget(tu.x, tu.y, tu.range, tu.hitsAir);
         if (!tgt) { tu.cd = 0.1; continue; }
         const dmg = TURRET.crystal.dmg * tu.dmgMult * this.hooks.mods.crystal;
-        this.r.shot(from, this.enemyWorld(tgt), 0x9ff3ff);
+        this.r.shot(from, this.enemyWorld(tgt), tu.react ? 0xd7f7ff : 0x9ff3ff);
+        const wasAlive = !tgt.dead;
         this.damage(tgt, dmg);
+        if (tu.react === 'bloom' && wasAlive && tgt.dead) this.hooks.gold(1, this.enemyWorld(tgt));
+        if (tu.react === 'glint') {
+          const next = this.nearestTarget(tgt.pos.x, tgt.pos.y, 1.8, tu.hitsAir, true, tgt);
+          if (next) { this.r.shot(this.enemyWorld(tgt), this.enemyWorld(next), 0xfff1a6); this.damage(next, dmg * 0.8); }
+        }
         if (tu.react === 'frost') tgt.chill = 1.5;
         if (tu.react === 'sparks') {
           this.r.ring(this.enemyWorld(tgt), 0.8, 0xff8a3a, 0.25);
@@ -543,7 +563,7 @@ export class Night {
         const fs = has('firestorm');
         this.shells.push({
           mesh: this.r.makeShell(), from, to, t: 0, dur: 0.5 + dist * 0.06,
-          dmg: (TURRET.ember.dmg + (fs ? 1 : 0)) * tu.dmgMult * this.hooks.mods.ember, radius: TURRET.ember.splash * (fs ? 1.6 : 1) * (1 + 0.12 * tu.stack), smoke: tu.react === 'smoke',
+          dmg: (TURRET.ember.dmg + (fs ? 1 : 0)) * tu.dmgMult * this.hooks.mods.ember, radius: TURRET.ember.splash * (fs ? 1.6 : 1) * (1 + 0.12 * tu.stack) * (tu.react === 'shrapnel' ? 1.3 : 1), smoke: tu.react === 'smoke', fire: tu.react === 'wildfire',
         });
         sfx.shell();
         this.r.kickBlock(tu.b.id, 3.5);
@@ -569,6 +589,7 @@ export class Night {
         this.r.puff(s.to, 3);
         sfx.boom();
         const gx = s.to.x + (N - 1) / 2, gy = s.to.z + (N - 1) / 2;
+        if (s.fire) { this.fires.push({ x: gx, y: gy, r: s.radius, t: 2.5, dps: 1.2 * this.wave.hpScale }); this.r.ring(s.to, s.radius, 0xff4a1a, 2.5); }
         for (const e of this.enemies) {
           if (e.mode === 'fly' || e.dead) continue;
           if (Math.hypot(e.pos.x - gx, e.pos.y - gy) <= s.radius + e.def.size * 0.5) { this.damage(e, s.dmg); if (s.smoke) e.chill = 2; }

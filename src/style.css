@@ -720,3 +720,6 @@ body.night[data-weather='moon'] { --sky-a: #182040; --sky-b: #6a6aa0; }
 .mapinfo .bagbtn { display: flex; gap: 8px; flex-wrap: wrap; }
 /* the player's own reduce-motion switch does what the system setting does */
 body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+
+/* stop sheets with three or more options */
+.stopsheet .contracts { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }

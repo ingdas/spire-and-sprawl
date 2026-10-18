@@ -25,12 +25,12 @@ The rest is polish, and there's a lot of it. It's listed below.
 | ✅ 1 | Stone, ward, rock and beacon are all pale grey-beige cubes. In the day 7 screenshot I couldn't pick out the ward towers. | Give each material its own silhouette, not just a colour. Stone: chunky bevelled bricks. Ward: a rune-carved slab with a glowing seam. Beacon: a lantern cage. Rock: a rough, faceted boulder. Crystal: a faceted, glassy shell. Ember: a brazier with a grate. | P1 | M |
 | ✅ 2 | At night every block turns blue-purple and crystal, stone and ward become one colour (nights 3–9). | Keep material colours at night: lighten the albedo or add a rim light, and give turret blocks an emissive glow (crystal cyan, ember orange, ward violet) so they're easiest to spot after dark. | P1 | S |
 | ✅ 3 | Stone has no job except filler, so most pieces feel like dead draws. | Give stone a real role. For example, *stone under a turret adds +1 range* (a foundation), or *stone walls take half damage from chewing*. Then "stone pillar + crystal crown" becomes a recipe, not a compromise. | P1 | S |
-| 4 | Only 3 combos exist (frost, sparks, smoke), and you only find them by hovering in the day. | Add a combo for every pair of turret and support blocks, around 8 in total. Show a small icon on the block when a combo is active, so combos read on the board itself. | P2 | M |
+| ✅ 4 | Only 3 combos exist (frost, sparks, smoke), and you only find them by hovering in the day. | Add a combo for every pair of turret and support blocks, around 8 in total. Show a small icon on the block when a combo is active, so combos read on the board itself. | P2 | M |
 | ✅ 5 | Turret blocks don't look like turrets. Only a small gem or flame sits on top. | Make the emblem scale with the stacking bonus, and show the stack count as stripes on the side of the block. A 3-crystal stack should look clearly more powerful than 1. | P2 | S |
 | ✅ 6 | Beacon and ward effects are invisible. You trust the tooltip. | Draw beacon links: a faint line from the beacon to each turret it boosts. Ward slow fields should shimmer on the ground at night. | P2 | S |
 | ✅ 7 | Gilded pieces look like normal ones once they're placed. | Gilded blocks get gold trim edges on the board, not just in the card. | P3 | S |
 | 8 | Unique blocks are rare, and only 6 exist. | Raise it to about 12 unique blocks and make a few common enough to build a run around: a *Siege Ballista* (long range, slow), a *Spike Pit* (floor trap), a *Wind Vane* (turns sandstorms into a weapon), a *Root Heart* (gardens spread). | P2 | L |
-| 9 | Materials have no upgrade path inside a run. | Forge option: "Temper": all crystal blocks in the bag get +10% damage. That makes material choice a build commitment. | P3 | M |
+| ✅ 9 | Materials have no upgrade path inside a run. | Forge option: "Temper": all crystal blocks in the bag get +10% damage. That makes material choice a build commitment. | P3 | M |
 | ✅ 10 | Overhanging blocks look like they're floating (the crystal pair over the core on night 4 read as a bug). | Draw supports: a timber strut or arch under overhangs, so hollows read as bridges and make Vaulted Arches legible. | P2 | M |
 | ✅ 11 | Material colours are the only way to tell blocks apart, which fails for colour-blind players. | With item 1, every material gets a distinct face pattern. Add a colour-blind palette option. | P2 | S |
 
@@ -69,10 +69,10 @@ The rest is polish, and there's a lot of it. It's listed below.
 | # | Problem (evidence) | Change | Pri | Size |
 |---|---|---|---|---|
 | ✅ 32 | Gold piles up: 80 by day 7 and 134 by night 7, with nothing to spend it on between shops. | Add gold sinks you can use any day: buy one extra piece for the day (cost rising per use), a paid reroll of the hand, and a paid extra demolish. | P1 | M |
-| 33 | Shop prices don't scale with how much gold you have, and relic prices only rise by +3 per relic owned. | Prices scale by act, and each act's shop gets a *premium* row (rare relics or unique blocks at 20–30 gold). | P2 | S |
+| ✅ 33 | Shop prices don't scale with how much gold you have, and relic prices only rise by +3 per relic owned. | Prices scale by act, and each act's shop gets a *premium* row (rare relics or unique blocks at 20–30 gold). | P2 | S |
 | ✅ 34 | Interest (+1 per 10, max 3) hardly matters once gold piles up. | Remove interest, or turn it into a relic ("Treasury Vault"). The baseline should push you to spend. | P2 | S |
-| 35 | The morning piece pick has no information except shape and material. | Show what the piece *adds*: "+1 crystal turret", "+3 wall", and a mini "fits your build" note if it makes a combo with blocks you already own. | P2 | M |
-| 36 | "Skip: take 2 gold" is never worth it. | Make skipping meaningful: *skip = the bag shrinks* (removes a random stone piece), or skipping gives 1 seal. | P3 | S |
+| ✅ 35 | The morning piece pick has no information except shape and material. | Show what the piece *adds*: "+1 crystal turret", "+3 wall", and a mini "fits your build" note if it makes a combo with blocks you already own. | P2 | M |
+| ✅ 36 | "Skip: take 2 gold" is never worth it. | Make skipping meaningful: *skip = the bag shrinks* (removes a random stone piece), or skipping gives 1 seal. | P3 | S |
 | ✅ 37 | With no cap on bag size, decks bloat (21 pieces by night 9), so good pieces come up rarely. | Hand quality matters: show the bag's composition (material counts) on the bag button, and offer more ways to remove pieces. | P2 | S |
 
 ## E. The map

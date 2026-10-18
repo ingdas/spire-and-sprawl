@@ -80,6 +80,7 @@ const GEO = {
   shell: new THREE.IcosahedronGeometry(0.13, 0),
   debris: new THREE.TetrahedronGeometry(0.12),
   strut: new THREE.BoxGeometry(0.98, 0.09, 0.98),
+  combo: new THREE.OctahedronGeometry(0.11),
   puff: new THREE.IcosahedronGeometry(0.2, 0),
   arrow: new THREE.ConeGeometry(0.45, 0.9, 3),
   anvil: new THREE.BoxGeometry(0.62, 0.2, 0.34),
@@ -420,6 +421,23 @@ export class Renderer {
     tiles.userData.fill = true;
     tiles.raycast = noRaycast;
     this.validRoot.add(tiles);
+  }
+
+  /** A small spinning star on every turret block that has a combo going. */
+  setCombos(ids: Set<number>) {
+    for (const [id, v] of this.blockViews) {
+      const has = v.mesh.getObjectByName('combo');
+      if (ids.has(id) && !has) {
+        const m = new THREE.Mesh(GEO.combo, new THREE.MeshBasicMaterial({ color: 0xfff1a6 }));
+        m.name = 'combo';
+        m.position.set(0.36, 0.36, 0.36);
+        m.raycast = noRaycast;
+        m.userData.spin = 3;
+        m.scale.setScalar(0.001);
+        m.userData.age = 0;
+        v.mesh.add(m);
+      } else if (!ids.has(id) && has) v.mesh.remove(has);
+    }
   }
 
   /** Glowing threads from each beacon to the turrets it powers. */
@@ -1219,6 +1237,12 @@ export class Renderer {
       v.mesh.scale.set(sxz, sy, sxz);
       // squash about the block's base, not its middle, so it stays planted
       v.mesh.position.set(p.x, p.y - (1 - sy) * 0.47, p.z);
+      const combo = v.mesh.getObjectByName('combo');
+      if (combo) {
+        combo.rotation.y += realDt * 3;
+        combo.userData.age += realDt;
+        combo.scale.setScalar(Math.max(0.001, easeOutBack(clamp01(combo.userData.age / 0.35)) * (1 + Math.sin(t * 5) * 0.12)));
+      }
       if (v.emblemOut) {
         v.emblemOutAge += dt / 0.2;
         v.emblemOut.scale.setScalar(Math.max(0.001, 1 - easeInCubic(clamp01(v.emblemOutAge))));

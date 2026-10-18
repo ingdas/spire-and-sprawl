@@ -6,7 +6,7 @@ import { CORE, ENEMIES, applyColorBlind, EnemyId, HAND_SIZE, MATS, MatId, N, NIG
 import { CODEX, CodexDef, HEATS, Meta, RelicId, RunStats, SEALS, UPGRADES, relicDef } from './meta';
 import { FOUNDERS, FounderId, Piece, make, pivotOf, randomPiece, rotatePiece, uniquePiece } from './pieces';
 import { Renderer, world } from './render';
-import { AIMS, Aim, CONTRACTS, ContractId, FOUNDATION_RANGE, Night, TOPPLE_SWING, isFoundation, REACTIONS, WEATHER, STACK_BONUS, Wave, makeWave, rangeBonus, reactionOf, stackBelow, turretRange } from './sim';
+import { AIMS, Aim, CONTRACTS, REACTIONS as COMBOS, ContractId, FOUNDATION_RANGE, Night, TOPPLE_SWING, isFoundation, REACTIONS, WEATHER, STACK_BONUS, Wave, makeWave, rangeBonus, reactionOf, stackBelow, turretRange } from './sim';
 import { BIOMES, BiomeDef, BiomeId, actOf, randomCells, rollRoute } from './biomes';
 import { ActMap, DANGER, GUARDIAN_INFO, MapNode, STOPS, StopKind, ahead, makeMap, reachable } from './map';
 import { badge, blankPlate, callout, compass, detail, enemyGlyph, flushDrawings, impression, ledgerLine, plate, sec, sheet, stamp, tab } from './ui';
@@ -62,6 +62,9 @@ interface Run {
   undo: { cols: ReturnType<Board['snapshot']>; gold: number; idx: number }[];
   /** per-night action uses */
   drops: number; rallies: number; shoreups: number; killsTonight: number;
+  premium: Piece | null; premiumSold: boolean;
+  /** forge "temper": permanent material boosts for this run */
+  temper: Partial<Record<MatId, number>>;
   /** extra pieces bought today */
   buys: number;
 }
@@ -334,7 +337,7 @@ export class Game {
         ${item('2', 'Survive the night', 'Enemies come from the <b class="red">red</b> sides. They chew through the <b>bottom</b> block of a column to reach the core.')}
         ${item('3', 'Tall towers', 'Turrets shoot further the higher they are. Stack the same material to make it stronger: three crystals on top of each other hit harder than one. A turret standing on stone (or rock) shoots 1 cell further.')}
         ${item('4', 'Topple!', 'At night, click a tower to knock it over. Every block that lands on an enemy crushes it, and the tower becomes a wall. What it is made of matters: ember splashes fire, crystal shatters into shards, ward leaves a slow field, garden drops gold. You get one topple per night.')}
-        ${item('✦', 'Combos', 'Some blocks react when they touch (sides, above or below): crystal + ward = frost beams that slow, crystal + ember = spark beams that splash fire, ember + garden = smoke shells that slow. Hover a tower in the day to see its combos.')}
+        ${item('✦', 'Combos', `A turret touching a certain block (side, above or below) gets a twist, and a small star shows on it: ${Object.values(COMBOS).map(c => `${MATS[c.turret].name.toLowerCase()} + ${MATS[c.with].name.toLowerCase()} = <b>${c.name}</b>`).join(', ')}. Hover a tower in the day to see what it does.`)}
         ${item('◎', 'Gold tips', 'Every 10 gold you save earns +1 at dawn (up to +3). Starting the night with pieces still in hand pays +1 gold each. At night you can drop an emergency stone for 3 gold, and at a camp on the map you can make the core pulse hit harder.')}
         ${item('ϟ', 'Weather', 'Some nights have weather: fog shortens turret range, thunderstorms strike your tallest tower (put a crystal on top to turn it into a weapon!), and a full moon makes enemies faster but pays extra gold. Check the Tonight panel.')}
         ${item('★', 'Unique blocks', 'Rare block stops on the map (and sometimes your morning pick) offer special blocks: the Anvil, Bell, Powder Keg, Omen Stone, Fountain or Mirror. Each one has its own rule, so build around it!')}
@@ -363,7 +366,7 @@ export class Game {
       gold: Math.max(0, START_GOLD + 2 * meta.rank('treasury') - hot), coreHp: coreMax, coreMax, day: 1, relics: [],
       stats: { nights: 0, maxTallest: 0, maxHollows: 0, fallKills: 0, kills: 0, placedMats: new Set(), coreDamaged: false, finalFootprint: 0, finalMats: new Set(), won: false, maxChain: 1, calderaNights: 0, maxUniques: 0 },
       route: rollRoute(), act: 0, heat: meta.heat, coreLevel: 0, vents: [], wave: makeWave(1), handSize: HAND_SIZE + (meta.has('grand_architect') ? 1 : 0),
-      draft: [], draftPick: -1, treasure: [], treasurePick: -1, platesEarned: 0, redraws: 0, demolishes: 0, keep: null, keptIdx: -1, topples: 0, keystone: meta.rank('keystone') > 0, shop: [], shopSold: [], market: [], marketSold: [], income: [], contract: 'standard', event: null, eventDone: '', map: makeMap(0, { treasure: meta.heat < 5 }), hurt: {}, hurtByNight: {}, undo: [], drops: 0, rallies: 0, shoreups: 0, killsTonight: 0, buys: 0,
+      draft: [], draftPick: -1, treasure: [], treasurePick: -1, platesEarned: 0, redraws: 0, demolishes: 0, keep: null, keptIdx: -1, topples: 0, keystone: meta.rank('keystone') > 0, shop: [], shopSold: [], market: [], marketSold: [], income: [], contract: 'standard', event: null, eventDone: '', map: makeMap(0, { treasure: meta.heat < 5 }), hurt: {}, hurtByNight: {}, undo: [], drops: 0, rallies: 0, shoreups: 0, killsTonight: 0, buys: 0, premium: null, premiumSold: false, temper: {},
     };
     const gifts = (meta.has('grand_architect') ? 1 : 0) + meta.rank('cartouche');
     for (const id of this.relicChoices(gifts)) { this.addRelic(id); this.toast(`Starting relic: ${relicDef(id).name}.`); }
@@ -606,7 +609,8 @@ export class Game {
 
   private mods() {
     const m = this.meta, b = this.biome;
-    return { crystal: 1 + 0.1 * m.rank('lens'), ember: (1 + 0.1 * m.rank('kiln')) * b.emberMult, range: 0.25 * m.rank('eye'), crystalRange: b.crystalRange };
+    const t = this.run?.temper ?? {};
+    return { crystal: (1 + 0.1 * m.rank('lens')) * (1 + 0.15 * (t.crystal ?? 0)), ember: (1 + 0.1 * m.rank('kiln')) * b.emberMult * (1 + 0.15 * (t.ember ?? 0)), range: 0.25 * m.rank('eye'), crystalRange: b.crystalRange, wardRange: 0.4 * (t.ward ?? 0) };
   }
 
   private coreDamage(n: number, by?: EnemyId, at?: THREE.Vector3) {
@@ -1044,10 +1048,37 @@ export class Game {
     const st = run.board.stats();
     this.r.setFocus(st.tallest);
     this.r.setLinks(this.beaconLinks());
+    this.r.setCombos(this.comboBlocks());
     if (this.phase === 'day') this.r.setPaths(this.enemyPaths());
     run.stats.maxTallest = Math.max(run.stats.maxTallest, st.tallest);
     run.stats.maxHollows = Math.max(run.stats.maxHollows, st.hollows);
     run.stats.maxUniques = Math.max(run.stats.maxUniques, [...run.board.blocks()].filter(b => MATS[b.b.mat].unique).length);
+  }
+
+  /** Turret blocks that currently have a combo with a neighbour. */
+  private comboBlocks() {
+    const b = this.run!.board, out = new Set<number>();
+    for (const { x, y, z, b: blk } of b.blocks()) {
+      if (!MATS[blk.mat].turret) continue;
+      const touching = new Set<MatId>();
+      for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) { const nb = b.blockAt(x + dx, y + dy, z + dz); if (nb) touching.add(nb.mat); }
+      if (reactionOf(blk.mat, touching)) out.add(blk.id);
+    }
+    return out;
+  }
+
+  /** What a piece would add to your fortress, in a line: turrets and combos with blocks you own. */
+  private pieceNote(p: Piece) {
+    const run = this.run!;
+    const turrets = p.blocks.filter(b => MATS[b.mat].turret).length;
+    const owned = new Set(run.bag.flatMap(q => q.blocks.map(b => b.mat)));
+    const mats = new Set(p.blocks.map(b => b.mat));
+    const combos = (Object.values(COMBOS)).filter(r => (mats.has(r.turret) && (owned.has(r.with) || mats.has(r.with))) || (mats.has(r.with) && owned.has(r.turret)));
+    const parts: string[] = [];
+    if (turrets) parts.push(`+${turrets} turret${turrets > 1 ? 's' : ''}`);
+    else parts.push(`+${p.blocks.length} wall`);
+    if (combos.length) parts.push(`combos: ${combos.slice(0, 2).map(c => `${c.icon} ${c.name}`).join(', ')}`);
+    return parts.join(' · ');
   }
 
   /** The routes tonight's walkers will take: from three points on each attacking edge to the core. */
@@ -1090,7 +1121,7 @@ export class Game {
     return Math.ceil(base * f);
   }
   /** Relics get pricier the more you own. */
-  private relicPrice(id: RelicId) { return this.price(relicDef(id).price + 3 * (this.run?.relics.length ?? 0)); }
+  private relicPrice(id: RelicId) { return this.price(relicDef(id).price + 3 * (this.run?.relics.length ?? 0) + 3 * (this.run?.act ?? 0)); }
 
   private addRelic(id: RelicId) {
     const run = this.run!;
@@ -1123,7 +1154,19 @@ export class Game {
       if (run.draftPick !== -1) return;
       run.bag.push(p); run.draftPick = i; sfx.place(); this.showReward();
     }));
-    acts.dskip = () => { if (run.draftPick !== -1) return; run.draftPick = -2; run.gold += 2; sfx.coin(); this.showReward(); };
+    acts.dskip = () => {
+      if (run.draftPick !== -1) return;
+      run.draftPick = -2; run.gold += 2; sfx.coin();
+      // skipping also clears out a plain stone piece, so the bag stays lean
+      const plain = run.bag.filter(p => p.blocks.every(b => b.mat === 'stone'));
+      if (plain.length && run.bag.length > 6) {
+        const p = plain[Math.floor(Math.random() * plain.length)];
+        run.bag.splice(run.bag.indexOf(p), 1);
+        run.draw = run.draw.filter(d => d !== p);
+        this.toast(`${p.name} left your bag.`);
+      }
+      this.showReward();
+    };
     run.treasure.forEach((id, i) => (acts[`t${i}`] = () => {
       if (run.treasurePick !== -1) return;
       run.treasurePick = i; this.addRelic(id); this.showReward();
@@ -1140,10 +1183,10 @@ export class Game {
     const night = run.day - 1;
     const draft = run.draft.map((p, i) => plate(p, {
       act: `d${i}`, taken: picked === i ? 'Got it' : undefined, faded: picked !== -1 && picked !== i,
-      desc: MATS[p.blocks[0].mat].unique ? MATS[p.blocks[0].mat].desc : undefined,
+      desc: MATS[p.blocks[0].mat].unique ? MATS[p.blocks[0].mat].desc : this.pieceNote(p),
     })).join('');
     const waive = picked === -1
-      ? `<div class="plate skip" data-act="dskip"><div class="blank"><span class="price"><i></i>+2</span></div><div class="nm">Skip</div><p class="note" style="margin:6px 0 0; font-size:12px">Take 2 gold instead.</p></div>`
+      ? `<div class="plate skip" data-act="dskip"><div class="blank"><span class="price"><i></i>+2</span></div><div class="nm">Skip</div><p class="note" style="margin:6px 0 0; font-size:12px">Take 2 gold and throw away a plain stone piece.</p></div>`
       : '';
     const treasure = run.treasure.map((id, i) => detail(id, {
       act: `t${i}`, taken: run.treasurePick === i ? 'Got it' : undefined, faded: run.treasurePick !== -1 && run.treasurePick !== i,
@@ -1286,6 +1329,10 @@ export class Game {
       run.shopSold = run.shop.map(() => false);
       run.market = [randomPiece(pool), randomPiece(pool)];
       run.marketSold = [false, false];
+      const owned = new Set(run.bag.flatMap(p => p.blocks.map(b => b.mat)));
+      const fresh = UNIQUES.filter(u => !owned.has(u));
+      run.premium = fresh.length ? uniquePiece(fresh[Math.floor(Math.random() * fresh.length)]) : null;
+      run.premiumSold = false;
       return this.showShop();
     }
     if (n.kind === 'treasure') { run.treasure = this.relicChoices(3); return this.showTreasure(); }
@@ -1336,6 +1383,12 @@ export class Game {
     }));
     const repairCost = this.price(5), removeCost = this.price(4), rerollCost = this.price(2);
     acts.repair = () => { if (run.gold < repairCost || run.coreHp >= run.coreMax) return; run.gold -= repairCost; run.coreHp = Math.min(run.coreMax, run.coreHp + 4); sfx.coin(); this.showShop(); };
+    // the premium shelf: a unique block for big spenders
+    const premCost = this.price(16 + 4 * run.act);
+    acts.prem = () => {
+      if (!run.premium || run.premiumSold || run.gold < premCost) return;
+      run.gold -= premCost; run.premiumSold = true; run.bag.push(run.premium); sfx.unlock(); this.showShop();
+    };
     acts.remove = () => { if (run.gold < removeCost || run.bag.length <= 4) return; this.showBag('remove', removeCost); };
     acts.reroll = () => { if (run.gold < rerollCost) return; run.gold -= rerollCost; run.shop = this.relicChoices(3); run.shopSold = run.shop.map(() => false); sfx.click(); this.showShop(); };
     const shop = run.shop.map((id, i) => {
@@ -1353,6 +1406,7 @@ export class Game {
         <div class="grid-row">${shop}</div>
         ${sec(2, 'Pieces')}
         <div class="grid-row">${market}</div>
+        ${run.premium ? `${sec('★', 'Premium shelf', 'one of a kind')}<div class="grid-row">${plate(run.premium, { act: 'prem', cost: premCost, desc: MATS[run.premium.blocks[0].mat].desc, taken: run.premiumSold ? 'Bought' : undefined, poor: !run.premiumSold && run.gold < premCost })}</div>` : ''}
       </div>
       <aside class="side">
         ${sec('⚒', 'Services')}
@@ -1392,10 +1446,23 @@ export class Game {
     this.stopSheet('forge', `<div class="contracts" style="margin-top:16px">
         ${this.option('⚒', 'Forge a piece', 'Gild it (+50% HP for good) or turn its stone into a turret material.', 'forge')}
         ${this.option('✕', 'Throw a piece away', 'Remove one piece from your bag, so you draw your good ones more often.', 'remove', run.bag.length > 4)}
+        ${this.option('♦', 'Temper a material', 'Make every crystal, ember or ward block stronger for the rest of the run.', 'temper')}
       </div>`, {
       forge: () => this.showBag('forge', 0),
+      temper: () => this.showTemper(),
       remove: () => { if (run.bag.length > 4) this.showBag('remove', 0); },
     }, 'Skip');
+  }
+
+  private showTemper() {
+    const run = this.run!;
+    const t = (m: MatId) => run.temper[m] ?? 0;
+    const pick = (m: MatId) => { run.temper[m] = t(m) + 1; sfx.unlock(); this.toast(`${MATS[m].name} tempered (level ${t(m)}).`); this.showMap(); };
+    this.stopSheet('forge', `<div class="contracts" style="margin-top:16px">
+        ${this.option('◇', `Crystal ${t('crystal') + 1}`, 'All crystal beams deal +15% damage.', 'tc')}
+        ${this.option('△', `Ember ${t('ember') + 1}`, 'All ember shells deal +15% damage.', 'te')}
+        ${this.option('○', `Ward ${t('ward') + 1}`, 'All ward fields reach +0.4 cells further.', 'tw')}
+      </div>`, { tc: () => pick('crystal'), te: () => pick('ember'), tw: () => pick('ward') }, 'Back');
   }
 
   private showTreasure() {
