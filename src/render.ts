@@ -12,6 +12,19 @@ const clamp01 = (t: number) => Math.max(0, Math.min(1, t));
 /** overshoots a little, then settles (follow-through) */
 const easeOutBack = (t: number) => { const c = 1.7; const u = t - 1; return 1 + (c + 1) * u * u * u + c * u * u; };
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+const easeInCubic = (t: number) => t * t * t;
+/** set opacity on every basic material under an object, relative to the opacity it was built with */
+function fadeTree(o: THREE.Object3D, k: number) {
+  o.traverse(c => {
+    const m = (c as THREE.Mesh).material as THREE.Material | undefined;
+    if (!m || !('opacity' in m)) return;
+    if (c.userData.baseOpacity === undefined) { c.userData.baseOpacity = m.opacity; m.transparent = true; }
+    m.opacity = c.userData.baseOpacity * k;
+  });
+}
+function disposeTree(o: THREE.Object3D) {
+  o.traverse(c => { const m = (c as THREE.Mesh).material as THREE.Material | undefined; m?.dispose(); });
+}
 const GRAVITY = 38;
 export const world = (x: number, y: number, z = 0) => new THREE.Vector3(x - C, z, y - C);
 
@@ -89,16 +102,18 @@ interface BlockView {
   pos: THREE.Vector3; vy: number; delay: number; tip: Tip | null;
   /** squash spring: + squashed, - stretched */
   sq: number; sqv: number; flash: number; emblemAge: number;
+  /** an emblem that just got covered, shrinking away */
+  emblemOut: THREE.Object3D | null; emblemOutAge: number;
 }
 
 /** A block on its way out: either popping in place or (toss) swinging off the edge and dropping away. */
-interface Dying { mesh: THREE.Mesh; mat: THREE.MeshToonMaterial; t: number; toss?: { pos: THREE.Vector3; tip: Tip | null; vy: number } }
+interface Dying { mesh: THREE.Mesh; mat: THREE.MeshToonMaterial; t: number; toss?: { pos: THREE.Vector3; tip: Tip | null; vy: number }; quiet?: number }
 
 interface Fx { obj: THREE.Object3D; life: number; max: number; vel?: THREE.Vector3; spin?: number; kind: 'debris' | 'fade' | 'ring' | 'float' | 'puff'; grow?: number }
 
 export interface EnemyView {
   root: THREE.Group; body: THREE.Mesh; mat: THREE.MeshToonMaterial; hpBar: THREE.Group; hpFill: THREE.Mesh; hpLag: THREE.Mesh;
-  gait: 'hop' | 'hover' | 'slither'; bornAt: number; lastT: number; lastHp: number; lag: number; punch: number;
+  gait: 'hop' | 'hover' | 'slither'; bornAt: number; lastT: number; lastHp: number; lag: number; punch: number; barAge: number;
 }
 
 interface DyingEnemy { v: EnemyView; color: number; t: number }
@@ -114,6 +129,10 @@ export class Renderer {
   private dyingEnemies: DyingEnemy[] = [];
   private ghostOffset = new THREE.Vector3();
   private ghostAnchor: THREE.Vector3 | null = null;
+  private ghostAge = 1;
+  private ghostSpin = 0;
+  private ghostFading: { g: THREE.Group; t: number }[] = [];
+  private islandTarget: { a: THREE.Color; b: THREE.Color; cliff: THREE.Color; rock: THREE.Color } | null = null;
   private coreSq = 0;
   private coreSqv = 0;
   private blockRoot = new THREE.Group();
@@ -187,24 +206,23 @@ export class Renderer {
 
   /** Repaint the island and sky for a biome. */
   setBiome(b: BiomeDef) {
-    this.islandMats.a.color.set(b.tiles[0]);
-    this.islandMats.b.color.set(b.tiles[1]);
-    this.islandMats.cliff.color.set(b.cliff);
-    this.islandMats.rock.color.set(b.rock);
-    document.body.style.setProperty('--sky-a', b.sky[0]);
-    document.body.style.setProperty('--sky-b', b.sky[1]);
+    // the island takes on the new land's colours over a second instead of snapping
+    this.islandTarget = { a: new THREE.Color(b.tiles[0]), b: new THREE.Color(b.tiles[1]), cliff: new THREE.Color(b.cliff), rock: new THREE.Color(b.rock) };
+    document.body.style.setProperty('--biome-a', b.sky[0]);
+    document.body.style.setProperty('--biome-b', b.sky[1]);
     document.body.dataset.biome = b.id;
   }
 
   /** Glowing lava vent markers. */
   setVents(cells: { x: number; y: number }[]) {
-    this.ventRoot.clear();
+    for (const v of this.ventRoot.children) v.userData.leave ??= 0;
     for (const c of cells) {
       const m = new THREE.Mesh(GEO.disc, new THREE.MeshBasicMaterial({ color: 0xff6a2a, transparent: true, opacity: 0.85, depthWrite: false }));
       m.rotation.x = -Math.PI / 2;
-      m.scale.setScalar(0.42);
+      m.scale.setScalar(0.001);
       m.position.copy(world(c.x, c.y, 0.015));
       m.userData.vent = true;
+      m.userData.age = -Math.random() * 0.3;
       this.ventRoot.add(m);
     }
   }
@@ -292,7 +310,7 @@ export class Renderer {
         mesh.userData.blockId = b.id;
         mesh.userData.cell = { x, y };
         this.blockRoot.add(mesh);
-        v = { mesh, mat, target, emblem: null, matId: b.mat, x, y, pos, vy: 0, delay: z * 0.035 + Math.random() * 0.04, tip: null, sq: 0, sqv: 0, flash: 0, emblemAge: 1 };
+        v = { mesh, mat, target, emblem: null, matId: b.mat, x, y, pos, vy: 0, delay: z * 0.035 + Math.random() * 0.04, tip: null, sq: 0, sqv: 0, flash: 0, emblemAge: 1, emblemOut: null, emblemOutAge: 0 };
         this.blockViews.set(b.id, v);
       } else if (Math.hypot(target.x - v.pos.x, target.z - v.pos.z) > 0.3 && !v.tip) {
         v.tip = this.makeTip(v.pos, target);
@@ -306,7 +324,9 @@ export class Renderer {
         v.emblem = this.makeEmblem(b.mat);
         if (v.emblem) { v.mesh.add(v.emblem); v.emblemAge = 0; v.emblem.scale.setScalar(0.001); }
       } else if (!topOpen && v.emblem) {
-        v.mesh.remove(v.emblem);
+        if (v.emblemOut) v.mesh.remove(v.emblemOut);
+        v.emblemOut = v.emblem;
+        v.emblemOutAge = 0;
         v.emblem = null;
       }
     }
@@ -453,20 +473,22 @@ export class Renderer {
   // ---------- ghost & overlays ----------
 
   setGhost(cells: { x: number; y: number; z: number; mat: MatId }[], ok: boolean) {
+    for (const o of this.ghostRoot.children) disposeTree(o);
     this.ghostRoot.clear();
-    if (cells.length) {
-      const anchor = world(cells[0].x, cells[0].y, cells[0].z);
-      if (this.ghostAnchor) {
-        this.ghostOffset.add(this.ghostAnchor.sub(anchor));
-        if (this.ghostOffset.length() > 4) this.ghostOffset.set(0, 0, 0);
-      }
-      this.ghostAnchor = anchor;
-    }
+    if (!cells.length) return this.clearGhost();
+    const anchor = new THREE.Vector3();
+    for (const c of cells) anchor.add(world(c.x, c.y, c.z + 0.5));
+    anchor.divideScalar(cells.length);
+    if (this.ghostAnchor) {
+      this.ghostOffset.add(this.ghostAnchor.clone().sub(anchor));
+      if (this.ghostOffset.length() > 4) this.ghostOffset.set(0, 0, 0);
+    } else this.ghostAge = 0;
+    this.ghostAnchor = anchor;
     for (const c of cells) {
       const col = new THREE.Color(MATS[c.mat].color);
       if (!ok) col.lerp(new THREE.Color(PALETTE.ghostBad), 0.7);
       const m = new THREE.Mesh(GEO.ghost, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: ok ? 0.62 : 0.45, depthWrite: false }));
-      m.position.copy(world(c.x, c.y, c.z + 0.5));
+      m.position.copy(world(c.x, c.y, c.z + 0.5)).sub(anchor);
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(GEO.ghost), new THREE.LineBasicMaterial({ color: ok ? 0xffffff : PALETTE.ghostBad }));
       m.add(edges);
       this.ghostRoot.add(m);
@@ -474,32 +496,70 @@ export class Renderer {
       const mark = new THREE.Mesh(GEO.disc, new THREE.MeshBasicMaterial({ color: ok ? PALETTE.ghostOk : PALETTE.ghostBad, transparent: true, opacity: 0.35, depthWrite: false }));
       mark.rotation.x = -Math.PI / 2;
       mark.scale.setScalar(0.42);
-      mark.position.copy(world(c.x, c.y, 0.02));
+      mark.position.copy(world(c.x, c.y, 0.02)).sub(anchor);
       this.ghostRoot.add(mark);
     }
+    this.placeGhost(0);
   }
 
-  clearGhost() { this.ghostRoot.clear(); this.ghostAnchor = null; this.ghostOffset.set(0, 0, 0); }
+  /** Turn the ghost a quarter: it spins into its new orientation instead of snapping. */
+  spinGhost() { this.ghostSpin += Math.PI / 2; }
+
+  private placeGhost(dt: number) {
+    this.ghostOffset.multiplyScalar(Math.exp(-dt * 20));
+    this.ghostSpin *= Math.exp(-dt * 16);
+    this.ghostAge = Math.min(1, this.ghostAge + dt / 0.18);
+    if (!this.ghostAnchor) return;
+    this.ghostRoot.position.copy(this.ghostAnchor).add(this.ghostOffset);
+    this.ghostRoot.position.y += Math.sin(this.time * 3) * 0.035;
+    this.ghostRoot.rotation.y = this.ghostSpin;
+    const k = easeOutBack(this.ghostAge);
+    this.ghostRoot.scale.setScalar(Math.max(0.001, 0.7 + 0.3 * k));
+    fadeTree(this.ghostRoot, clamp01(this.ghostAge * 1.5));
+  }
+
+  /** The ghost fades and shrinks away rather than blinking out. */
+  clearGhost() {
+    if (this.ghostRoot.children.length) {
+      const g = new THREE.Group();
+      g.position.copy(this.ghostRoot.position);
+      g.rotation.copy(this.ghostRoot.rotation);
+      g.scale.copy(this.ghostRoot.scale);
+      g.add(...this.ghostRoot.children);
+      this.scene.add(g);
+      this.ghostFading.push({ g, t: 0 });
+    }
+    this.ghostAnchor = null;
+    this.ghostOffset.set(0, 0, 0);
+    this.ghostSpin = 0;
+  }
 
   setRanges(rings: { x: number; y: number; r: number; color: number }[]) {
-    this.ringRoot.clear();
+    const keep = new Set<string>();
     for (const r of rings) {
+      const key = `${r.x},${r.y},${r.r.toFixed(2)},${r.color}`;
+      keep.add(key);
+      const live = this.ringRoot.children.find(m => m.userData.key === key && m.userData.leave === undefined);
+      if (live) continue;
       const m = new THREE.Mesh(GEO.rangeRing, new THREE.MeshBasicMaterial({ color: r.color, transparent: true, opacity: 0.85, depthWrite: false }));
       m.rotation.x = -Math.PI / 2;
       m.scale.setScalar(0.001);
       m.userData.r = r.r;
       m.userData.age = 0;
+      m.userData.key = key;
       m.position.copy(world(r.x, r.y, 0.03));
       const fill = new THREE.Mesh(GEO.disc, new THREE.MeshBasicMaterial({ color: r.color, transparent: true, opacity: 0.08, depthWrite: false }));
       m.add(fill);
       this.ringRoot.add(m);
     }
+    for (const m of this.ringRoot.children) if (!keep.has(m.userData.key)) m.userData.leave ??= 0;
   }
 
   setTelegraph(sides: number[]) {
-    this.telegraphRoot.clear();
+    for (const o of this.telegraphRoot.children) if (!sides.includes(o.userData.side)) o.userData.leave ??= 0;
     const mat = toon(0xff4d6d, { emissive: 0x551020 });
     for (const s of sides) {
+      if (this.telegraphRoot.children.some(o => o.userData.side === s && o.userData.leave === undefined)) continue;
       const a = outlined(GEO.arrow, mat, 0.05, false);
       const d = C + 2.2;
       const pos = [new THREE.Vector3(0, 0.6, -d), new THREE.Vector3(d, 0.6, 0), new THREE.Vector3(0, 0.6, d), new THREE.Vector3(-d, 0.6, 0)][s];
@@ -509,6 +569,7 @@ export class Renderer {
       a.rotation.y = [0, -Math.PI / 2, Math.PI, Math.PI / 2][s];
       a.userData.basePos = pos.clone();
       a.userData.age = -s * 0.08;
+      a.userData.side = s;
       a.scale.setScalar(1.4);
       this.telegraphRoot.add(a);
       const strip = new THREE.Mesh(new THREE.PlaneGeometry(N, 0.6), new THREE.MeshBasicMaterial({ color: 0xff4d6d, transparent: true, opacity: 0.45, depthWrite: false }));
@@ -518,6 +579,8 @@ export class Renderer {
       const e = C + 0.2;
       strip.position.copy([new THREE.Vector3(0, 0.02, -e), new THREE.Vector3(e, 0.02, 0), new THREE.Vector3(0, 0.02, e), new THREE.Vector3(-e, 0.02, 0)][s]);
       strip.userData.strip = true;
+      strip.userData.side = s;
+      strip.userData.age = 0;
       this.telegraphRoot.add(strip);
     }
   }
@@ -588,7 +651,7 @@ export class Renderer {
     root.scale.setScalar(0.001);
     this.scene.add(root);
     const gait = type === 'flier' || type === 'bomber' || type === 'leviathan' || type === 'boss' ? 'hover' : type === 'wyrm' ? 'slither' : 'hop';
-    return { root, body, mat, hpBar, hpFill, hpLag, gait, bornAt: this.time, lastT: this.time, lastHp: 1, lag: 1, punch: 0 };
+    return { root, body, mat, hpBar, hpFill, hpLag, gait, bornAt: this.time, lastT: this.time, lastHp: 1, lag: 1, punch: 0, barAge: 0 };
   }
 
   /** Elites are bigger and wear a spinning gold halo. */
@@ -644,6 +707,10 @@ export class Renderer {
     if (flash > 0) col.lerp(new THREE.Color(0xffffff), Math.min(1, flash * 8));
     v.mat.color.copy(col);
     v.hpBar.visible = hpFrac < 0.999;
+    if (v.hpBar.visible) {
+      v.barAge = Math.min(1, v.barAge + dt / 0.25);
+      v.hpBar.scale.multiplyScalar(Math.max(0.001, easeOutBack(v.barAge)));
+    }
     v.hpFill.scale.x = Math.max(0.001, hpFrac);
     v.hpLag.scale.x = Math.max(0.001, v.lag);
     v.hpBar.quaternion.copy(this.camera.quaternion);
@@ -788,6 +855,11 @@ export class Renderer {
       v.mesh.scale.set(sxz, sy, sxz);
       // squash about the block's base, not its middle, so it stays planted
       v.mesh.position.set(p.x, p.y - (1 - sy) * 0.47, p.z);
+      if (v.emblemOut) {
+        v.emblemOutAge += dt / 0.2;
+        v.emblemOut.scale.setScalar(Math.max(0.001, 1 - easeInCubic(clamp01(v.emblemOutAge))));
+        if (v.emblemOutAge >= 1) { v.mesh.remove(v.emblemOut); v.emblemOut = null; }
+      }
       if (v.emblem && v.emblemAge < 1) {
         v.emblemAge += dt / 0.4;
         v.emblem.scale.setScalar(Math.max(0.001, easeOutBack(clamp01(v.emblemAge))));
@@ -818,6 +890,14 @@ export class Renderer {
         if (ts.pos.y < -7) { this.scene.remove(d.mesh); d.mat.dispose(); this.dying.splice(i, 1); }
         continue;
       }
+      if (d.quiet !== undefined) {
+        // a whole board being cleared: blocks sink and shrink away in a ripple, no fireworks
+        const k = clamp01((d.t - d.quiet) / 0.28);
+        d.mesh.scale.setScalar(Math.max(0.001, 1 - easeInCubic(k)));
+        d.mesh.position.y -= dt * 1.5 * k;
+        if (k >= 1) { this.scene.remove(d.mesh); d.mat.dispose(); this.dying.splice(i, 1); }
+        continue;
+      }
       if (d.t < 0.08) {
         const k = d.t / 0.08;
         d.mesh.scale.setScalar(1 + 0.16 * k);
@@ -844,11 +924,28 @@ export class Renderer {
         this.dyingEnemies.splice(i, 1);
       }
     }
-    this.ghostOffset.multiplyScalar(Math.exp(-dt * 20));
-    this.ghostRoot.position.copy(this.ghostOffset).add(new THREE.Vector3(0, Math.sin(t * 3) * 0.035, 0));
-    for (const m of this.ringRoot.children) {
-      m.userData.age += dt;
+    this.placeGhost(realDt);
+    for (let i = this.ghostFading.length - 1; i >= 0; i--) {
+      const f = this.ghostFading[i];
+      f.t += realDt / 0.16;
+      f.g.scale.setScalar(Math.max(0.001, 1 - 0.3 * f.t));
+      fadeTree(f.g, 1 - clamp01(f.t));
+      if (f.t >= 1) { disposeTree(f.g); this.scene.remove(f.g); this.ghostFading.splice(i, 1); }
+    }
+    for (const m of [...this.ringRoot.children]) {
+      if (m.userData.leave !== undefined) {
+        m.userData.leave += realDt / 0.16;
+        m.scale.setScalar(Math.max(0.001, m.userData.r * (1 - 0.35 * easeInCubic(clamp01(m.userData.leave)))));
+        fadeTree(m, 1 - clamp01(m.userData.leave));
+        if (m.userData.leave >= 1) { disposeTree(m); this.ringRoot.remove(m); }
+        continue;
+      }
+      m.userData.age += realDt;
       m.scale.setScalar(Math.max(0.001, m.userData.r * easeOutBack(clamp01(m.userData.age / 0.3))));
+    }
+    if (this.islandTarget) {
+      const k = Math.min(1, realDt * 2.5), it = this.islandTarget, im = this.islandMats;
+      im.a.color.lerp(it.a, k); im.b.color.lerp(it.b, k); im.cliff.color.lerp(it.cliff, k); im.rock.color.lerp(it.rock, k);
     }
     this.coreSqv += (-300 * this.coreSq - 12 * this.coreSqv) * dt;
     this.coreSq = Math.max(-0.3, Math.min(0.4, this.coreSq + this.coreSqv * dt));
@@ -862,19 +959,40 @@ export class Renderer {
     this.coreFlash = Math.max(0, this.coreFlash - realDt);
     gemMat.color.set(PALETTE.core).lerp(new THREE.Color(0xffffff), this.coreFlash * 2);
 
-    for (const v of this.ventRoot.children) ((v as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.55 + Math.sin(t * 3 + v.position.x) * 0.3;
+    for (const v of [...this.ventRoot.children]) {
+      ((v as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.55 + Math.sin(t * 3 + v.position.x) * 0.3;
+      if (v.userData.leave !== undefined) {
+        v.userData.leave += realDt / 0.3;
+        v.scale.setScalar(Math.max(0.001, 0.42 * (1 - easeInCubic(clamp01(v.userData.leave)))));
+        if (v.userData.leave >= 1) { disposeTree(v); this.ventRoot.remove(v); }
+      } else {
+        v.userData.age += realDt;
+        v.scale.setScalar(Math.max(0.001, 0.42 * easeOutBack(clamp01(v.userData.age / 0.5))));
+      }
+    }
     for (const d of this.decor) {
       d.position.y = d.userData.baseY + Math.sin(t * 0.5 + d.userData.phase) * 0.4;
       d.rotation.y += realDt * 0.1;
     }
-    for (const a of this.telegraphRoot.children) {
-      if (a.userData.strip) { ((a as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = 0.3 + Math.sin(t * 4) * 0.15; continue; }
+    for (const a of [...this.telegraphRoot.children]) {
+      const leave = a.userData.leave as number | undefined;
+      if (leave !== undefined) a.userData.leave = leave + realDt / 0.3;
+      const out = leave === undefined ? 0 : clamp01(leave);
+      if (out >= 1) { this.telegraphRoot.remove(a); if (a.userData.strip) disposeTree(a); continue; }
+      if (a.userData.strip) {
+        a.userData.age += realDt;
+        const fade = clamp01(a.userData.age / 0.4) * (1 - out);
+        ((a as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = (0.3 + Math.sin(t * 4) * 0.15) * fade;
+        continue;
+      }
       const bp = a.userData.basePos as THREE.Vector3;
       const pulse = (Math.sin(t * 5) + 1) * 0.25;
       a.userData.age += dt;
       const drop = 1 - easeOutBack(clamp01(a.userData.age / 0.45));
       a.position.copy(bp).multiplyScalar(1 - pulse * 0.04);
-      a.position.y += drop * 3;
+      // arriving: drop in with a bounce; leaving: a small hop up (anticipation) and away
+      a.position.y += drop * 3 + (out ? Math.sin(out * Math.PI * 0.5) * 2.5 - 0.15 * Math.sin(out * Math.PI * 2) : 0);
+      a.scale.setScalar(Math.max(0.001, 1.4 * (1 - easeInCubic(out))));
     }
 
     for (let i = this.fxList.length - 1; i >= 0; i--) {
@@ -950,14 +1068,20 @@ export class Renderer {
     this.camera.position.copy(this.controls.target).add(p);
   }
 
+  /** Wipe the board for a new run: everything leaves in a ripple from the centre instead of vanishing. */
   clearAll() {
-    for (const v of this.blockViews.values()) { this.blockRoot.remove(v.mesh); v.mat.dispose(); }
+    for (const v of this.blockViews.values()) {
+      this.blockRoot.remove(v.mesh);
+      v.mesh.visible = true;
+      v.mesh.position.copy(v.pos);
+      this.scene.add(v.mesh);
+      this.dying.push({ mesh: v.mesh, mat: v.mat, t: 0, quiet: Math.hypot(v.pos.x, v.pos.z) * 0.025 + v.pos.y * 0.02 });
+    }
     this.blockViews.clear();
-    for (const d of this.dying) { this.scene.remove(d.mesh); d.mat.dispose(); }
-    this.dying = [];
+    this.tossing.clear();
     this.clearGhost();
-    this.ringRoot.clear();
-    this.telegraphRoot.clear();
-    this.ventRoot.clear();
+    this.setRanges([]);
+    this.setTelegraph([]);
+    this.setVents([]);
   }
 }

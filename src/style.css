@@ -18,8 +18,8 @@
   --red: #d33f2d;
   --red-wash: rgba(211, 63, 45, 0.1);
   --ochre: #b8841f;
-  --sky-a: #bfe7f3;
-  --sky-b: #fbe9c9;
+  --biome-a: #bfe7f3;
+  --biome-b: #fbe9c9;
   --display: 'Big Shoulders Display', 'Arial Narrow', 'Impact', sans-serif;
   --mono: 'Rubik', 'Segoe UI', system-ui, sans-serif;
   --serif: 'Rubik', 'Segoe UI', system-ui, sans-serif;
@@ -62,9 +62,15 @@ html, body {
   color: var(--ink);
   user-select: none;
   -webkit-user-select: none;
+  /* typed sky colours tween, so day/night and new lands fade instead of snapping */
+  --sky-a: var(--biome-a);
+  --sky-b: var(--biome-b);
   background: radial-gradient(ellipse at 50% 30%, var(--sky-b) 0%, var(--sky-a) 70%);
+  transition: --sky-a 1.2s ease, --sky-b 1.2s ease;
 }
-body.night { background: radial-gradient(ellipse at 50% 30%, #4a3570 0%, #1d2246 70%); }
+body.night { --sky-a: #1d2246; --sky-b: #4a3570; }
+@property --sky-a { syntax: '<color>'; inherits: true; initial-value: #bfe7f3; }
+@property --sky-b { syntax: '<color>'; inherits: true; initial-value: #fbe9c9; }
 
 #app { position: fixed; inset: 0; }
 #app canvas { display: block; touch-action: none; }
@@ -289,7 +295,7 @@ button:disabled { cursor: not-allowed; }
 .sheet .head .kicker { margin-bottom: 8px; display: block; }
 .sheet .head .note { margin: 6px 0 0; max-width: 520px; }
 .sheet .foot { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin: 24px -30px -22px; padding: 14px 30px 18px; border-top: 1px solid var(--ink); position: sticky; bottom: -22px; z-index: 4; background: var(--paper); }
-body.sheet-open #hud { display: none; }
+
 .sheet .cols { display: grid; grid-template-columns: 1fr 280px; gap: 28px; }
 .sheet .side { border-left: 1px solid var(--ink); padding-left: 22px; }
 .grid-row { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -599,11 +605,39 @@ kbd { font-family: var(--mono); font-size: 10.5px; font-weight: 600; border: 1px
 @keyframes lift { from { transform: translateY(0); } }
 #hand .plate:not(.sel):not(.used):hover { transform: translateY(-5px); }
 
-/* HUD pieces arrive instead of popping on */
-#topbar { animation: dropDown 0.5s cubic-bezier(0.2, 1.3, 0.4, 1) 0.15s backwards; }
-@keyframes dropDown { from { opacity: 0; transform: translate(-50%, -30px); } }
-#threat { animation: slideRight 0.45s cubic-bezier(0.2, 1.3, 0.4, 1) 0.2s backwards; }
-@keyframes slideRight { from { opacity: 0; transform: translateX(-40px); } }
+/* HUD pieces slide in from their own edge and slide back out to it.
+   `translate` composes with each element's own transform, so centring tricks keep working. */
+#topbar { --oy: -44px; --d: 0s; }
+#threat { --ox: -60px; --oy: 0px; --d: 0.06s; }
+#relics { --ox: 50px; --oy: 0px; --d: 0.1s; }
+#bottom { --oy: 120px; --d: 0.12s; }
+#hand { --oy: 120px; }
+#bossbar { --oy: -36px; }
+#hint { --oy: 14px; }
+#tooltip { --oy: 5px; }
+@keyframes hudIn { from { opacity: 0; translate: var(--ox, 0px) var(--oy, 16px); } }
+@keyframes hudOut { to { opacity: 0; translate: var(--ox, 0px) var(--oy, 16px); } }
+.anim-in { animation: hudIn 0.45s cubic-bezier(0.2, 1.3, 0.4, 1) backwards; }
+.anim-out { animation: hudOut 0.22s cubic-bezier(0.5, 0, 0.75, 0) forwards; pointer-events: none !important; }
+#tooltip.anim-in { animation-duration: 0.16s; }
+#tooltip.anim-out { animation-duration: 0.12s; }
+#hud.back > *:not(.hidden) { animation: hudIn 0.5s cubic-bezier(0.2, 1.3, 0.4, 1) backwards; animation-delay: var(--d, 0s); }
+#hud.away > *, #hud.leaving > * { animation: hudOut 0.24s cubic-bezier(0.5, 0, 0.75, 0) forwards !important; pointer-events: none !important; }
+#hint.swap { animation: hintSwap 0.3s cubic-bezier(0.3, 1.5, 0.5, 1); }
+@keyframes hintSwap { from { opacity: 0.2; translate: 0 6px; } }
+.ghost-out { animation: ghostOut 0.24s cubic-bezier(0.5, 0, 0.75, 0) forwards; }
+@keyframes ghostOut { to { opacity: 0; translate: 0 40px; } }
+#relics .callout.fresh { animation: relicIn 0.6s cubic-bezier(0.3, 1.6, 0.5, 1) backwards; animation-delay: calc(0.25s + var(--i, 0) * 0.12s); }
+@keyframes relicIn { 0% { opacity: 0; transform: scale(2.2) rotate(-25deg); } 60% { opacity: 1; } }
+#hand .plate canvas.spin { animation: spinIn 0.28s cubic-bezier(0.3, 1.5, 0.5, 1); }
+@keyframes spinIn { from { transform: rotate(-70deg) scale(0.75); } }
+#topbar .cell.changed .v { display: inline-block; animation: pop 0.4s cubic-bezier(0.3, 1.7, 0.5, 1); }
+#threat.changed { animation: pop 0.35s cubic-bezier(0.3, 1.7, 0.5, 1); }
+#modal.closing { animation: fadeOut 0.2s ease-in forwards; pointer-events: none; }
+#modal.closing .box { animation: modalOut 0.2s cubic-bezier(0.5, 0, 0.75, 0) forwards; }
+@keyframes modalOut { to { opacity: 0; transform: scale(0.92) translateY(10px); } }
+.banner.out { animation: bannerOut 0.2s ease-in forwards; }
+@keyframes bannerOut { from { opacity: 1; } to { opacity: 0; transform: translate(-50%, -50%) scale(0.92); } }
 #actions.fresh > * { animation: riseIn 0.4s cubic-bezier(0.2, 1.3, 0.4, 1) backwards; }
 @keyframes riseIn { from { opacity: 0; transform: translateY(16px); } }
 #tooltip:not(.hidden) { animation: tipIn 0.14s ease-out; }

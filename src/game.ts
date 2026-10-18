@@ -110,6 +110,11 @@ export class Game {
   private handSel = -1;
   private actionsPhase = '';
   private actionsFresh = 0;
+  private fades = new WeakMap<HTMLElement, number>();
+  private relicsShown = 0;
+  private handRot = 0;
+  private phaseShown = '';
+  private threatPhase = '';
   private last = performance.now();
 
   constructor() {
@@ -150,7 +155,7 @@ export class Game {
     this.night = null;
     this.run = null;
     this.r.setBiome(BIOMES.meadow);
-    $('hud').classList.add('hidden');
+    this.showHud(false);
     this.r.setNight(false);
     this.r.clearAll();
     this.buildDemo();
@@ -328,7 +333,8 @@ export class Game {
     const gifts = (meta.has('grand_architect') ? 1 : 0) + meta.rank('cartouche');
     for (const id of this.relicChoices(gifts)) { this.addRelic(id); this.toast(`Starting relic: ${relicDef(id).name}.`); }
     this.overlay('');
-    $('hud').classList.remove('hidden');
+    this.relicsShown = 0;
+    this.showHud(true);
     this.r.syncBoard(this.run.board);
     this.r.setBiome(this.biome);
     this.showMap();
@@ -626,7 +632,7 @@ export class Game {
     this.night?.dispose();
     this.r.clearGhost();
     this.night = null;
-    $('bossbar').classList.add('hidden');
+    this.fade($('bossbar'), false);
     run.stats.nights = run.day;
     if (this.biome.id === 'caldera') run.stats.calderaNights++;
     if (run.day > this.meta.bestNight) { this.meta.bestNight = run.day; this.meta.save(); }
@@ -683,7 +689,7 @@ export class Game {
     this.phase = 'end';
     this.night?.dispose();
     this.night = null;
-    $('bossbar').classList.add('hidden');
+    this.fade($('bossbar'), false);
     const st = run.board.stats();
     run.stats.won = won;
     run.stats.finalFootprint = st.footprint;
@@ -1215,12 +1221,13 @@ export class Game {
     const low = run.coreHp <= run.coreMax * 0.34;
     const ticks = Array.from({ length: run.coreMax }, (_, i) => `<i class="${i < Math.ceil(run.coreHp) ? '' : 'off'}"></i>`).join('');
     $('topbar').innerHTML = `
-      <div class="cell phase"><span class="label">${this.biome.name} · ${run.day}/${NIGHTS}</span><span class="v">${phase}</span></div>
+      <div class="cell phase ${this.phaseShown && this.phaseShown !== this.phase ? 'changed' : ''}"><span class="label">${this.biome.name} · ${run.day}/${NIGHTS}</span><span class="v">${phase}</span></div>
       <div class="cell ${low ? 'low' : ''}" data-tip="<b>Core HP</b><br>If it reaches 0, you lose."><span class="label">Core HP</span><span class="v"><span data-num="thp">${Math.ceil(run.coreHp)}</span><small>/${run.coreMax}</small></span><div class="hpbar">${ticks}</div></div>
       <div class="cell" data-tip="<b>Gold</b><br>Earned every morning, more with gardens on the ground."><span class="label">Gold</span><span class="v gold"><span data-num="tgold">${run.gold}</span></span></div>
-      <div class="cell stat" data-tip="<b>Tallest tower</b><br>Height makes turrets shoot further, but attracts sappers."><span class="label">Tallest</span><span class="v">${st.tallest}</span></div>
-      <div class="cell stat" data-tip="<b>Area</b><br>Ground you have built on. Width earns gold, but attracts brutes."><span class="label">Area</span><span class="v">${st.footprint}</span></div>`;
+      <div class="cell stat" data-tip="<b>Tallest tower</b><br>Height makes turrets shoot further, but attracts sappers."><span class="label">Tallest</span><span class="v"><span data-num="ttall">${st.tallest}</span></span></div>
+      <div class="cell stat" data-tip="<b>Area</b><br>Ground you have built on. Width earns gold, but attracts brutes."><span class="label">Area</span><span class="v"><span data-num="tarea">${st.footprint}</span></span></div>`;
     this.animateNumbers($('topbar'));
+    this.phaseShown = this.phase;
   }
 
   private renderThreat() {
@@ -1228,7 +1235,10 @@ export class Game {
     const counts = new Map<EnemyId, number>();
     for (const s of run.wave.spawns) counts.set(s.type, (counts.get(s.type) ?? 0) + 1);
     const el = $('threat');
-    el.classList.toggle('hidden', this.phase === 'dawn');
+    this.fade(el, this.phase !== 'dawn');
+    // the panel gives a little jolt when it switches between "Tonight" and "Attack!"
+    if (this.threatPhase && this.threatPhase !== this.phase) this.restart(el, 'changed', 400);
+    this.threatPhase = this.phase;
     el.innerHTML = `
       <div class="hd"><span class="t">${this.phase === 'night' ? 'Attack!' : 'Tonight'}</span><span>${run.wave.guardian ? '<span class="tag">Boss</span>' : ''}</span></div>
       <div class="survey">
@@ -1249,23 +1259,26 @@ export class Game {
     const boss = n.bossRef;
     const bar = $('bossbar');
     if (boss && !boss.dead) {
-      bar.classList.remove('hidden');
+      this.fade(bar, true);
       const t = bar.querySelector('.t')!;
       if (t.textContent !== boss.def.name) t.textContent = boss.def.name;
       bar.querySelector('.label')!.textContent = boss.hidden ? 'underground!' : 'Boss';
       (bar.querySelector('.fill') as HTMLElement).style.width = `${(boss.hp / boss.maxHp) * 100}%`;
-    } else bar.classList.add('hidden');
+    } else this.fade(bar, false);
   }
 
   private renderRelics() {
     const run = this.run!;
-    $('relics').innerHTML = run.relics.length ? `<span class="label">Relics</span>${run.relics.map(id => callout(id)).join('')}` : '';
+    const el = $('relics');
+    el.innerHTML = run.relics.length ? `<span class="label">Relics</span>${run.relics.map(id => callout(id)).join('')}` : '';
+    el.querySelectorAll<HTMLElement>('.callout').forEach((c, i) => { if (i >= this.relicsShown) { c.classList.add('fresh'); c.style.setProperty('--i', `${i - this.relicsShown}`); } });
+    this.relicsShown = run.relics.length;
   }
 
   private renderHand() {
     const run = this.run!;
     const el = $('hand');
-    el.classList.toggle('hidden', this.phase !== 'day');
+    this.fade(el, this.phase === 'day');
     el.innerHTML = run.hand.map((p, i) => plate({ ...p, blocks: rotatePiece(p.blocks, i === this.sel ? this.rot : 0) }, {
       no: `${i + 1}`, taken: i === run.keptIdx ? 'Kept' : undefined, extraCls: `${i === this.sel ? 'sel' : ''} ${run.used[i] ? 'used' : ''}`, attrs: `data-card="${i}"`,
     })).join('');
@@ -1276,16 +1289,19 @@ export class Game {
       if (dealing) { c.classList.add('deal'); c.style.setProperty('--i', `${i}`); }
       else if (run.used[i] && !this.handUsed[i]) c.classList.add('consumed');
       else if (i === this.sel && this.handSel !== i) c.classList.add('lift');
+      else if (i === this.sel && this.handRot !== this.rot) c.querySelector('canvas')?.classList.add('spin');
       c.onclick = () => this.selectCard(i);
     });
     if (this.phase === 'day') this.handShown = this.handDeal;
     this.handUsed = [...run.used];
     this.handSel = this.sel;
+    this.handRot = this.rot;
   }
 
   private renderActions() {
     const el = $('actions');
     const run = this.run!;
+    if (this.actionsPhase && this.actionsPhase !== this.phase && el.children.length) this.ghostOut(el);
     if (this.phase === 'day') {
       const left = run.used.filter(u => !u).length;
       el.innerHTML = `${stamp('Start night', 'night', left ? `${left} piece${left > 1 ? 's' : ''} left` : 'ready!')}
@@ -1358,7 +1374,16 @@ export class Game {
       if (this.dropping) h = `Pick a spot next to your fortress to drop a stone (${DROP_COST} gold). It crushes whatever is under it.`;
     }
     if (extra) h = extra;
-    if (h !== this.hint) { this.hint = h; $('hint').textContent = h; }
+    if (h !== this.hint) {
+      this.hint = h;
+      const el = $('hint');
+      if (!h) this.fade(el, false);
+      else {
+        const showing = !el.classList.contains('hidden') && !el.classList.contains('anim-out') && !!el.textContent;
+        el.textContent = h;
+        if (showing) { el.classList.remove('swap'); void el.offsetWidth; el.classList.add('swap'); } else this.fade(el, true);
+      }
+    }
     // keep the hint just above whatever the bottom bar currently holds
     $('hint').style.bottom = `${$('bottom').offsetHeight + 24}px`;
   }
@@ -1459,6 +1484,7 @@ export class Game {
   private rotate() {
     if (this.phase !== 'day' || this.sel < 0) return;
     this.rot = (this.rot + 1) % 4;
+    this.r.spinGhost();
     sfx.rotate();
     this.renderHand();
     this.updateGhost();
@@ -1529,9 +1555,9 @@ export class Game {
     const tip = $('tooltip');
     document.addEventListener('mouseover', e => {
       const t = (e.target as HTMLElement).closest?.('[data-tip]') as HTMLElement | null;
-      if (!t) { tip.classList.add('hidden'); return; }
+      if (!t) { this.fade(tip, false); return; }
       tip.innerHTML = t.dataset.tip!;
-      tip.classList.remove('hidden');
+      this.fade(tip, true);
     });
     document.addEventListener('mousemove', e => {
       if (tip.classList.contains('hidden')) return;
@@ -1556,11 +1582,14 @@ export class Game {
   private ask(title: string, text: string, yes: string, onYes: () => void) {
     sfx.click();
     const el = $('modal');
+    el.classList.remove('closing');
     el.innerHTML = `<div class="paper box"><h2>${title}</h2><p>${text}</p><div class="row">${tab('Cancel', 'no')}${tab(yes, 'yes', { red: true })}</div></div>`;
     el.onclick = e => {
       const a = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
       if (!a && e.target !== el) return;
-      el.innerHTML = '';
+      el.classList.add('closing');
+      el.onclick = null;
+      setTimeout(() => { if (el.classList.contains('closing')) { el.innerHTML = ''; el.classList.remove('closing'); } }, 200);
       if (a === 'yes') onYes();
     };
   }
@@ -1571,7 +1600,7 @@ export class Game {
    */
   private overlay(html: string, dim = false, acts: Record<string, () => void> = {}) {
     const el = $('overlay');
-    if (html) document.querySelectorAll('.banner').forEach(b => b.remove());
+    if (html) this.dismissBanners();
     const old = el.querySelector<HTMLElement>('.sheet');
     const key = (h: ParentNode | null) => h?.querySelector('h1')?.textContent ?? '';
     const probe = document.createElement('div');
@@ -1599,11 +1628,64 @@ export class Game {
     if (html) this.animateNumbers(el);
     el.classList.toggle('dim', dim && !!html);
     document.body.classList.toggle('sheet-open', dim && !!html);
-    $('tooltip').classList.add('hidden');
+    const hud = $('hud'), away = dim && !!html;
+    if (away !== hud.classList.contains('away')) {
+      hud.classList.toggle('away', away);
+      if (!away) this.restart(hud, 'back', 900);
+    }
+    this.fade($('tooltip'), false);
     el.onclick = e => {
       const t = (e.target as HTMLElement).closest('[data-act]') as HTMLElement | null;
       if (t && acts[t.dataset.act!]) acts[t.dataset.act!]();
     };
+  }
+
+  /** Show or hide an element with its enter/leave animation instead of snapping. */
+  private fade(el: HTMLElement, on: boolean) {
+    const hidden = el.classList.contains('hidden'), leaving = el.classList.contains('anim-out');
+    if (on) {
+      if (!hidden && !leaving) return;
+      clearTimeout(this.fades.get(el));
+      el.classList.remove('hidden', 'anim-out');
+      this.restart(el, 'anim-in', 600);
+    } else {
+      if (hidden || leaving) return;
+      el.classList.remove('anim-in');
+      el.classList.add('anim-out');
+      this.fades.set(el, window.setTimeout(() => { el.classList.add('hidden'); el.classList.remove('anim-out'); }, 230));
+    }
+  }
+
+  /** Re-trigger a CSS animation class (and drop it again once it has played). */
+  private restart(el: HTMLElement, cls: string, ms: number) {
+    el.classList.remove(cls);
+    void el.offsetWidth;
+    el.classList.add(cls);
+    setTimeout(() => el.classList.remove(cls), ms);
+  }
+
+  private showHud(on: boolean) {
+    const hud = $('hud');
+    if (on) { hud.classList.remove('hidden', 'leaving'); this.restart(hud, 'back', 900); return; }
+    if (hud.classList.contains('hidden')) return;
+    hud.classList.add('leaving');
+    setTimeout(() => { if (hud.classList.contains('leaving')) { hud.classList.add('hidden'); hud.classList.remove('leaving'); } }, 260);
+  }
+
+  /** A copy of the element's current contents drops away while the real one gets new contents. */
+  private ghostOut(el: HTMLElement) {
+    const r = el.getBoundingClientRect();
+    const c = el.cloneNode(true) as HTMLElement;
+    c.classList.remove('fresh');
+    c.classList.add('ghost-out');
+    c.querySelectorAll('[data-act]').forEach(n => n.removeAttribute('data-act'));
+    Object.assign(c.style, { position: 'fixed', left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, margin: '0', pointerEvents: 'none', zIndex: '5' });
+    el.after(c);
+    setTimeout(() => c.remove(), 260);
+  }
+
+  private dismissBanners() {
+    document.querySelectorAll<HTMLElement>('.banner:not(.out)').forEach(b => { b.classList.add('out'); setTimeout(() => b.remove(), 220); });
   }
 
   /** The old sheet lifts off the table and fades while the new one comes in. */
@@ -1614,6 +1696,8 @@ export class Game {
     Object.assign(old.style, { position: 'absolute', left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, margin: '0' });
     old.classList.remove('enter', 'static');
     old.classList.add('leave');
+    // a leaving copy is scenery: it must never answer clicks or selectors
+    old.querySelectorAll('[data-act]').forEach(n => n.removeAttribute('data-act'));
     wrap.appendChild(old);
     document.body.appendChild(wrap);
     setTimeout(() => wrap.remove(), 260);
@@ -1649,7 +1733,7 @@ export class Game {
   }
 
   private banner(kicker: string, title: string, sub = '') {
-    document.querySelectorAll('.banner').forEach(b => b.remove());
+    this.dismissBanners();
     const b = document.createElement('div');
     b.className = 'banner';
     b.innerHTML = `<div class="k">${kicker}</div><div class="t">${title}</div>${sub ? `<div class="dimline">${sub}</div>` : ''}`;

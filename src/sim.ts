@@ -542,6 +542,7 @@ export class Night {
       const p = s.from.clone().lerp(s.to, k);
       p.y += Math.sin(k * Math.PI) * (1.4 + s.from.distanceTo(s.to) * 0.15);
       s.mesh.position.copy(p);
+      s.mesh.scale.setScalar(Math.min(1, 0.25 + k * 6));
       s.mesh.rotation.x += dt * 12;
       s.mesh.rotation.z += dt * 7;
       if (k >= 1) {

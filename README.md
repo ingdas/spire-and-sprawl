@@ -111,7 +111,13 @@ Nothing just appears.
 - **Sheets:** they slide in and deal their cards with a little overshoot, and lift off before they leave. Re-rendering the same sheet only pops what changed.
 - **Numbers:** gold and HP count up or down.
 - **Hand:** cards are dealt in, and played cards fly off.
-- **Reduced motion:** `prefers-reduced-motion` turns the animations off.
+- **Leaving, as well as arriving:**
+  - The placement ghost fades in and out, and spins when you rotate.
+  - Range rings, attack arrows, lava vents and covered emblems shrink away.
+  - A new run clears the old board in a ripple from the centre.
+  - New lands and day/night tween both the island and the sky (the sky colours are typed `@property`s).
+- **HUD:** panels slide in from their own edge, and slide back out when a sheet opens or the phase changes. The old action buttons drop away while the new ones rise. The hint crossfades, new relics pop in, and dialogs and banners fade out instead of being cut off.
+- **Reduced motion:** `prefers-reduced-motion` turns off the menu and HUD animations.
 
 ## Meta progression
 
