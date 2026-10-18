@@ -5,7 +5,7 @@ import { CORE, ENEMIES, EnemyId, HAND_SIZE, MATS, MatId, N, NIGHTS, START_CORE_H
 import { CODEX, CodexDef, HEATS, Meta, RelicId, RunStats, SEALS, UPGRADES, relicDef } from './meta';
 import { FOUNDERS, FounderId, Piece, make, pivotOf, randomPiece, rotatePiece, uniquePiece } from './pieces';
 import { Renderer, world } from './render';
-import { AIMS, Aim, CONTRACTS, ContractId, FOUNDATION_RANGE, Night, isFoundation, REACTIONS, WEATHER, STACK_BONUS, Wave, makeWave, rangeBonus, reactionOf, stackBelow, turretRange } from './sim';
+import { AIMS, Aim, CONTRACTS, ContractId, FOUNDATION_RANGE, Night, TOPPLE_SWING, isFoundation, REACTIONS, WEATHER, STACK_BONUS, Wave, makeWave, rangeBonus, reactionOf, stackBelow, turretRange } from './sim';
 import { BIOMES, BiomeDef, BiomeId, actOf, randomCells, rollRoute } from './biomes';
 import { ActMap, DANGER, GUARDIAN_INFO, MapNode, STOPS, StopKind, ahead, makeMap, reachable } from './map';
 import { badge, blankPlate, callout, compass, detail, enemyGlyph, flushDrawings, impression, ledgerLine, plate, sec, sheet, stamp, tab } from './ui';
@@ -59,6 +59,10 @@ interface Run {
   hurtByNight: Record<number, number>;
   /** board states before each placement today, newest last */
   undo: { cols: ReturnType<Board['snapshot']>; gold: number; idx: number }[];
+  /** per-night action uses */
+  drops: number; rallies: number; shoreups: number; killsTonight: number;
+  /** extra pieces bought today */
+  buys: number;
 }
 
 const SIDE_NAMES = ['North', 'East', 'South', 'West'];
@@ -74,10 +78,15 @@ const EVENT_TEXT: Record<EventId, { icon: string; title: string; text: string; y
 /** Towers taller than this lose their tops on the journey between biomes. */
 const JOURNEY_MAX_H = 10;
 const DEMOLISH_PER_DAY = 2;
+const DEMOLISH_COST = 3;
 const CAMP_HEAL = 6;
 const CAMP_GOLD = 6;
 const DROP_COST = 3;
-const INTEREST_CAP = 3;
+/** a night's extra actions */
+const RALLY_SECONDS = 5;
+/** a bonus topple every this many kills in one night */
+const KILLS_PER_TOPPLE = 15;
+const INTEREST_CAP = 4;
 const GILD_HP = 1.5;
 const $ = (id: string) => document.getElementById(id)!;
 const shuffle = <T>(a: T[]) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -88,7 +97,7 @@ export class Game {
   phase: Phase = 'title';
   run: Run | null = null;
   night: Night | null = null;
-  speed = 1;
+  speed = (() => { try { return Number(localStorage.getItem('spire-speed')) || 1; } catch { return 1; } })();
   sel = -1;
   rot = 0;
   private lastPointer: { x: number; y: number } | null = null;
@@ -103,6 +112,8 @@ export class Game {
   private demoKey = '';
   private dropping = false;
   private aim: Aim = 'first';
+  private paused = false;
+  private shoring = false;
   /** the dawn screen to return to from the bag view */
   private screen: () => void = () => {};
   private mapSel = -1;
@@ -140,8 +151,8 @@ export class Game {
     let simDt = dt;
     if (this.phase === 'title') this.r.autoOrbit(dt);
     if (this.phase === 'night' && this.night && this.run) {
-      simDt = dt * this.speed;
-      for (let i = 0; i < this.speed && this.phase === 'night'; i++) this.night.update(dt);
+      simDt = this.paused ? 0 : dt * this.speed;
+      for (let i = 0; i < (this.paused ? 0 : this.speed) && this.phase === 'night'; i++) this.night.update(dt);
       this.r.tintBlocks(this.run.board);
       this.updateNightHud();
       // enemies move under the aim, so refresh the crush preview a few times a second
@@ -333,7 +344,7 @@ export class Game {
       gold: Math.max(0, START_GOLD + 2 * meta.rank('treasury') - hot), coreHp: coreMax, coreMax, day: 1, relics: [],
       stats: { nights: 0, maxTallest: 0, maxHollows: 0, fallKills: 0, kills: 0, placedMats: new Set(), coreDamaged: false, finalFootprint: 0, finalMats: new Set(), won: false, maxChain: 1, calderaNights: 0, maxUniques: 0 },
       route: rollRoute(), act: 0, heat: meta.heat, coreLevel: 0, vents: [], wave: makeWave(1), handSize: HAND_SIZE + (meta.has('grand_architect') ? 1 : 0),
-      draft: [], draftPick: -1, treasure: [], treasurePick: -1, platesEarned: 0, redraws: 0, demolishes: 0, keep: null, keptIdx: -1, topples: 0, keystone: meta.rank('keystone') > 0, shop: [], shopSold: [], market: [], marketSold: [], income: [], contract: 'standard', event: null, eventDone: '', map: makeMap(0, { treasure: meta.heat < 5 }), hurt: {}, hurtByNight: {}, undo: [],
+      draft: [], draftPick: -1, treasure: [], treasurePick: -1, platesEarned: 0, redraws: 0, demolishes: 0, keep: null, keptIdx: -1, topples: 0, keystone: meta.rank('keystone') > 0, shop: [], shopSold: [], market: [], marketSold: [], income: [], contract: 'standard', event: null, eventDone: '', map: makeMap(0, { treasure: meta.heat < 5 }), hurt: {}, hurtByNight: {}, undo: [], drops: 0, rallies: 0, shoreups: 0, killsTonight: 0, buys: 0,
     };
     const gifts = (meta.has('grand_architect') ? 1 : 0) + meta.rank('cartouche');
     for (const id of this.relicChoices(gifts)) { this.addRelic(id); this.toast(`Starting relic: ${relicDef(id).name}.`); }
@@ -342,7 +353,9 @@ export class Game {
     this.showHud(true);
     this.r.syncBoard(this.run.board);
     this.r.setBiome(this.biome);
-    this.showMap();
+    // a brand-new player builds before meeting the map
+    if (!meta.runs) this.enterNode(this.run.map.nodes[0]);
+    else this.showMap();
   }
 
   // ======================= journey between biomes =======================
@@ -387,10 +400,12 @@ export class Game {
     run.redraws = this.meta.rank('redraft');
     run.demolishes = DEMOLISH_PER_DAY;
     run.undo = [];
+    run.buys = 0;
     this.demolishing = false;
     this.sel = -1;
     this.rot = 0;
     this.r.setTelegraph(run.wave.sides);
+    this.r.setPaths(this.enemyPaths());
     this.banner(`${run.day} of ${NIGHTS}`, 'Day', run.wave.guardian ? `tonight: ${ENEMIES[run.wave.guardian].name}` : 'time to build');
     this.renderHud();
     if (run.day === 1) this.selectCard(0);
@@ -424,7 +439,12 @@ export class Game {
     const early = run.used.filter(u => !u).length;
     if (early) { run.gold += early; this.toast(`Early start: +${early} gold.`); }
     this.dropping = false;
+    this.shoring = false;
+    this.paused = false;
+    document.body.classList.remove('paused');
     run.undo = [];
+    run.drops = 0; run.rallies = 0; run.shoreups = 0; run.killsTonight = 0;
+    this.r.setPaths([]);
     this.r.setValid([]);
     run.topples = 1 + this.meta.rank('leverage') + (CONTRACTS[run.contract].topple ?? 0) + (this.has('tipping_point') ? 1 : 0);
     if (this.has('storm_caller') && !run.wave.guardian) run.wave.weather = 'storm';
@@ -440,7 +460,12 @@ export class Game {
       vents: run.vents,
       gold: (n, at) => { run.gold += n; sfx.coin(); if (at) this.r.floatText(at.clone().add(new THREE.Vector3(0, 0.6, 0)), `+${n}`, '#f7c948'); this.renderTop(); },
       coreDamage: (n, by, at) => this.coreDamage(n, by, at),
-      onKill: fall => { run.stats.kills++; if (fall) run.stats.fallKills++; },
+      onKill: fall => {
+        run.stats.kills++;
+        if (fall) run.stats.fallKills++;
+        // good defence earns more toppling
+        if (++run.killsTonight % KILLS_PER_TOPPLE === 0) { run.topples++; this.toast(`${run.killsTonight} enemies down: +1 topple!`); this.renderActions(); }
+      },
       boardChanged: () => { this.r.syncBoard(run.board); this.trackStats(); },
     });
     this.banner(`${run.day} of ${NIGHTS}`, 'Night', run.wave.guardian ? `the ${ENEMIES[run.wave.guardian].name.toLowerCase()} is coming` : `attack from the ${run.wave.sides.map(s => SIDE_NAMES[s]).join(' & ')}`);
@@ -505,15 +530,19 @@ export class Game {
 
   // ======================= emergency stone (night) =======================
 
+  /** The emergency stone gets pricier with every drop tonight, and in later acts. */
+  private dropCost() { const run = this.run!; return DROP_COST + 2 * run.act + 2 * run.drops; }
+
   private toggleDrop() {
     const run = this.run;
     if (!run || this.phase !== 'night') return;
-    this.dropping = !this.dropping && run.gold >= DROP_COST;
+    this.shoring = false;
+    this.dropping = !this.dropping && run.gold >= this.dropCost();
     this.ghostKey = '';
     this.r.clearGhost();
     sfx.click();
     this.renderActions();
-    this.setHint(this.dropping ? `${matchMedia('(pointer: coarse)').matches ? 'Tap a spot twice' : 'Click a spot'} next to your fortress to drop a stone (${DROP_COST} gold). It crushes whatever is under it.` : undefined);
+    this.setHint(this.dropping ? `${matchMedia('(pointer: coarse)').matches ? 'Tap a spot twice' : 'Click a spot'} next to your fortress to drop a stone (${this.dropCost()} gold). It crushes whatever is under it.` : undefined);
   }
 
   private dropPlacement() {
@@ -530,16 +559,77 @@ export class Game {
     const key = `${p.cells[0].x},${p.cells[0].y}`;
     if (touch && this.demoKey !== key) { this.demoKey = key; this.r.setGhost(p.cells, p.ok); return; }
     this.demoKey = '';
-    if (!p.ok || run.gold < DROP_COST) { sfx.invalid(); return; }
-    run.gold -= DROP_COST;
+    if (!p.ok || run.gold < this.dropCost()) { sfx.invalid(); return; }
+    run.gold -= this.dropCost();
+    run.drops++;
     run.board.place(p, this.hpMult);
     this.r.syncBoard(run.board);
     this.night!.crushAt(p.cells[0].x, p.cells[0].y);
     this.r.clearGhost();
-    if (run.gold < DROP_COST) this.dropping = false;
+    if (run.gold < this.dropCost()) this.dropping = false;
     this.renderTop();
     this.renderActions();
     this.setHint();
+  }
+
+  private rally() {
+    const run = this.run;
+    if (!run || this.phase !== 'night' || run.rallies >= 1 || !this.night) return;
+    run.rallies++;
+    this.night.rallyNow(RALLY_SECONDS);
+    this.toast(`Rally! Turrets fire twice as fast for ${RALLY_SECONDS} seconds.`);
+    this.renderActions();
+  }
+
+  private toggleShore() {
+    const run = this.run;
+    if (!run || this.phase !== 'night' || run.shoreups >= 1) return;
+    this.dropping = false;
+    this.shoring = !this.shoring;
+    sfx.click();
+    this.renderActions();
+    this.setHint(this.shoring ? `${matchMedia('(pointer: coarse)').matches ? 'Tap' : 'Click'} a tower to shore it up: full repair and +50% HP for good.` : undefined);
+  }
+
+  private tryShore() {
+    const run = this.run!;
+    if (!this.lastPointer) return;
+    const hit = this.r.pickBlock(this.lastPointer.x, this.lastPointer.y);
+    if (!hit || !run.board.height(hit.x, hit.y)) { sfx.invalid(); return; }
+    this.night!.shoreUp(hit.x, hit.y);
+    run.shoreups++;
+    this.shoring = false;
+    this.r.tintBlocks(run.board);
+    this.renderActions();
+    this.setHint();
+  }
+
+  /** Gold sinks for the day: draw one more piece, or knock out one more block. */
+  private buyCost() { return 4 + 2 * this.run!.buys + this.run!.act; }
+
+  private buyPiece() {
+    const run = this.run;
+    if (!run || this.phase !== 'day' || run.gold < this.buyCost()) return;
+    if (!run.draw.length) run.draw = shuffle(run.bag.filter(p => !run.hand.includes(p)));
+    const p = run.draw.pop();
+    if (!p) return;
+    run.gold -= this.buyCost();
+    run.buys++;
+    run.hand.push(p);
+    run.used.push(false);
+    sfx.coin();
+    this.renderHud();
+    this.selectCard(run.hand.length - 1);
+  }
+
+  private payDemolish() {
+    const run = this.run;
+    if (!run || this.phase !== 'day' || run.demolishes > 0 || run.gold < DEMOLISH_COST) return;
+    run.gold -= DEMOLISH_COST;
+    run.demolishes = 1;
+    sfx.coin();
+    this.renderHud();
+    this.toggleDemolish();
   }
 
   // ======================= demolish =======================
@@ -608,7 +698,7 @@ export class Game {
       let best = -1;
       for (let i = 0; i < 4; i++) {
         const cells = run.board.toppleCells(cell.x, cell.y, i);
-        const score = night.enemiesOn(cells) * 10 + cells.filter(c => c.z >= 0).length;
+        const score = night.enemiesOn(cells, TOPPLE_SWING) * 10 + cells.filter(c => c.z >= 0).length;
         if (score > best) { best = score; d = i; }
       }
     }
@@ -626,7 +716,7 @@ export class Game {
     const kept = aim.cells.filter(c => c.z >= 0);
     const key = `${aim.x},${aim.y},${aim.d},${this.run!.board.version}`;
     if (key !== this.ghostKey) { this.ghostKey = key; this.r.setGhost(kept, true); }
-    const hits = this.night!.enemiesOn(kept);
+    const hits = this.night!.enemiesOn(kept, TOPPLE_SWING);
     const chain = kept.some(c => c.z >= 2) ? ' · knocks over the next tower!' : '';
     const touch = matchMedia('(pointer: coarse)').matches;
     this.setHint(`${touch ? 'Tap again' : 'Click'} to topple ${SIDE_NAMES[aim.d].toLowerCase()}${hits ? ` · crushes ${hits} enem${hits > 1 ? 'ies' : 'y'}` : ''}${chain} · ${touch ? 'Turn ↻' : 'R'} to change direction`);
@@ -642,7 +732,7 @@ export class Game {
     if (run.topples > 0) {
       for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
         if (!run.board.canTopple(x, y)) continue;
-        for (let d = 0; d < 4; d++) best = Math.max(best, n.enemiesOn(run.board.toppleCells(x, y, d).filter(c => c.z >= 0)));
+        for (let d = 0; d < 4; d++) best = Math.max(best, n.enemiesOn(run.board.toppleCells(x, y, d).filter(c => c.z >= 0), TOPPLE_SWING));
       }
     }
     el.classList.toggle('hot', best >= 3);
@@ -701,8 +791,8 @@ export class Game {
     if (this.has('cartographer')) income.push(['Cartographer', Math.floor(st.footprint / 6)]);
     if (this.has('arches')) income.push(['Vaulted Arches', Math.min(6, Math.floor(st.hollows / 2))]);
     // interest: savings grow a little
-    const interest = Math.min(INTEREST_CAP, Math.floor(run.gold / 10));
-    if (interest) income.push(['Interest on savings', interest]);
+    const interest = this.has('vault') ? Math.min(INTEREST_CAP, Math.floor(run.gold / 10)) : 0;
+    if (interest) income.push(['Treasury Vault', interest]);
     const done = CONTRACTS[run.contract];
     if (done.gold) income.push([`Contract: ${done.name}`, done.gold]);
     run.income = income.filter(i => i[1] > 0);
@@ -723,7 +813,9 @@ export class Game {
     run.day++;
     run.contract = 'standard';
     this.renderHud();
-    this.showReward();
+    const lost = run.hurtByNight[run.day - 1] ?? 0;
+    this.banner(`Night ${run.day - 1}`, 'Survived', `${run.killsTonight} defeated · ${lost ? `core −${lost}` : 'core untouched'}`);
+    setTimeout(() => { if (this.phase === 'dawn' && this.run === run) this.showReward(); }, 1400);
   }
 
   private endRun(won: boolean) {
@@ -814,9 +906,23 @@ export class Game {
     const st = run.board.stats();
     this.r.setFocus(st.tallest);
     this.r.setLinks(this.beaconLinks());
+    if (this.phase === 'day') this.r.setPaths(this.enemyPaths());
     run.stats.maxTallest = Math.max(run.stats.maxTallest, st.tallest);
     run.stats.maxHollows = Math.max(run.stats.maxHollows, st.hollows);
     run.stats.maxUniques = Math.max(run.stats.maxUniques, [...run.board.blocks()].filter(b => MATS[b.b.mat].unique).length);
+  }
+
+  /** The routes tonight's walkers will take: from three points on each attacking edge to the core. */
+  private enemyPaths() {
+    const run = this.run!, b = run.board;
+    const out: { x: number; y: number }[][] = [];
+    for (const side of run.wave.sides) for (const k of [2, 6, 10]) {
+      let c = [{ x: k, y: 0 }, { x: N - 1, y: k }, { x: k, y: N - 1 }, { x: 0, y: k }][side];
+      const path = [[{ x: k, y: -1 }, { x: N, y: k }, { x: k, y: N }, { x: -1, y: k }][side], c];
+      for (let i = 0; i < 40 && !b.isCore(c.x, c.y); i++) { c = b.nextStep(c.x, c.y); path.push(c); }
+      out.push(path);
+    }
+    return out;
   }
 
   /** Which turrets each beacon powers (the 3x3x3 cube around it), for drawing the links. */
@@ -1011,6 +1117,7 @@ export class Game {
       foot: `<span class="label">${matchMedia('(pointer: coarse)').matches ? 'Tap a glowing spot, then Go' : 'Click a glowing spot to choose it'}</span>${stamp(canGo ? (fight ? `Start day ${run.day}` : `Go: ${info!.name}`) : 'Not yet', 'go', '', !canGo)}`,
       cls: 'mapsheet',
     }), true, acts);
+    if (!this.meta.runs && run.day === 2 && m.visited.length === 1) this.toast('This is the map. Pick your path to the boss: each spot does one thing.');
     // keep the spot you are choosing on screen (the map is taller than a phone)
     document.querySelector('.map .node.sel')?.scrollIntoView({ block: 'center' });
     this.renderHud();
@@ -1361,6 +1468,13 @@ export class Game {
     }), true, { back });
   }
 
+  /** What the bag holds, by material, for the bag button's tooltip. */
+  private bagTip() {
+    const counts = new Map<MatId, number>();
+    for (const p of this.run!.bag) for (const b of p.blocks) counts.set(b.mat, (counts.get(b.mat) ?? 0) + 1);
+    return `<b>Your bag</b><br>${[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([m, n]) => `<span class='sw' style='background:#${MATS[m].color.toString(16).padStart(6, '0')}'></span>${MATS[m].name} ×${n}`).join('<br>')}`;
+  }
+
   private renderHand() {
     const run = this.run!;
     const el = $('hand');
@@ -1391,10 +1505,10 @@ export class Game {
     if (this.phase === 'day') {
       const left = run.used.filter(u => !u).length;
       el.innerHTML = `${stamp('Start night', 'night', left ? `${left} piece${left > 1 ? 's' : ''} left` : 'ready!')}
-        <div class="tabs">${tab('Rotate', 'rotate', { disabled: this.sel < 0, tip: 'Rotate the piece (R)' })}${tab('Undo', 'undo', { disabled: !run.undo.length, tip: 'Take back your last piece (Z)' })}${run.redraws > 0 ? tab(`Redraw ${run.redraws}`, 'redraw', { tip: 'Swap your unused pieces for new ones' }) : ''}${tab('Keep', 'keep', { disabled: this.sel < 0 || !!run.keep, tip: 'Save the selected piece for tomorrow (K)' })}${tab(`Demolish ${run.demolishes}`, 'demolish', { disabled: !run.demolishes, red: this.demolishing, tip: 'Remove one of your blocks (X)' })}${tab(`Bag ${run.bag.length}`, 'bag')}</div>`;
+        <div class="tabs">${tab('Rotate', 'rotate', { disabled: this.sel < 0, tip: 'Rotate the piece (R)' })}${tab('Undo', 'undo', { disabled: !run.undo.length, tip: 'Take back your last piece (Z)' })}${run.redraws > 0 ? tab(`Redraw ${run.redraws}`, 'redraw', { tip: 'Swap your unused pieces for new ones' }) : ''}${tab('Keep', 'keep', { disabled: this.sel < 0 || !!run.keep, tip: 'Save the selected piece for tomorrow (K)' })}${run.demolishes ? tab(`Demolish ${run.demolishes}`, 'demolish', { red: this.demolishing, tip: 'Remove one of your blocks (X)' }) : tab(`Demolish · ${DEMOLISH_COST}g`, 'paydemo', { disabled: run.gold < DEMOLISH_COST, tip: 'Pay for one more demolish today' })}${tab(`+ Piece · ${this.buyCost()}g`, 'buy', { disabled: run.gold < this.buyCost(), tip: 'Draw one more piece from your bag today. Costs more each time.' })}${tab(`Bag ${run.bag.length}`, 'bag', { tip: this.bagTip() })}</div>`;
     } else if (this.phase === 'night') {
       el.innerHTML = `<span class="left topples${run.topples ? '' : ' spent'}" data-tip="<b>Topples</b><br>Click a tower to knock it onto the enemies.">⤵ Topples <b>${run.topples}</b></span>
-        <div class="tabs">${tab(`Drop stone · ${DROP_COST}g`, 'drop', { disabled: run.gold < DROP_COST, red: this.dropping, tip: 'Drop a stone block on the enemies (D)' })}${run.topples ? tab('Turn ↻', 'turn', { disabled: !this.ghostKey, tip: 'Change which way the tower falls (R)' }) : ''}${tab(`Aim: ${AIMS[this.aim]}`, 'aim', { tip: 'What turrets shoot first: closest to the core, the strongest enemy, or fliers (A)' })}${tab(`Speed ${this.speed}×`, 'speed', { tip: 'Night speed (F)' })}</div>`;
+        <div class="tabs">${tab(this.paused ? 'Resume ▶' : 'Pause ❚❚', 'pause', { red: this.paused, tip: 'Pause the night (P). You can still look around.' })}${tab(`Rally${run.rallies ? ' ✓' : ''}`, 'rally', { disabled: run.rallies >= 1, tip: `Once a night: turrets fire twice as fast for ${RALLY_SECONDS} seconds (G)` })}${tab(`Shore up${run.shoreups ? ' ✓' : ''}`, 'shore', { disabled: run.shoreups >= 1, red: this.shoring, tip: 'Once a night: fully repair one tower and give it +50% HP (H)' })}${tab(`Drop stone · ${this.dropCost()}g`, 'drop', { disabled: run.gold < this.dropCost(), red: this.dropping, tip: 'Drop a stone block on the enemies (D). Each drop costs more.' })}${run.topples ? tab('Turn ↻', 'turn', { disabled: !this.ghostKey, tip: 'Change which way the tower falls (R)' }) : ''}${tab(`Aim: ${AIMS[this.aim]}`, 'aim', { tip: 'What turrets shoot first: closest to the core, the strongest enemy, or fliers (A)' })}${tab(`Speed ${this.speed}×`, 'speed', { tip: 'Night speed (F)' })}</div>`;
     } else el.innerHTML = '';
     // the controls rise in when the phase changes, not on every refresh
     if (this.actionsPhase !== this.phase) this.actionsFresh = performance.now() + 450;
@@ -1412,6 +1526,11 @@ export class Game {
       if (a === 'demolish') this.toggleDemolish();
       if (a === 'keep') this.keepPiece();
       if (a === 'drop') this.toggleDrop();
+      if (a === 'pause') this.togglePause();
+      if (a === 'rally') this.rally();
+      if (a === 'shore') this.toggleShore();
+      if (a === 'buy') this.buyPiece();
+      if (a === 'paydemo') this.payDemolish();
       if (a === 'aim') { const order: Aim[] = ['first', 'strong', 'air']; this.aim = order[(order.indexOf(this.aim) + 1) % 3]; sfx.click(); this.renderActions(); }
     }));
   }
@@ -1439,8 +1558,17 @@ export class Game {
     if (next >= 0) this.selectCard(next);
   }
 
+  private togglePause() {
+    if (this.phase !== 'night') return;
+    this.paused = !this.paused;
+    document.body.classList.toggle('paused', this.paused);
+    sfx.click();
+    this.renderActions();
+  }
+
   private toggleSpeed() {
     this.speed = this.speed === 1 ? 2 : this.speed === 2 ? 3 : 1;
+    try { localStorage.setItem('spire-speed', `${this.speed}`); } catch { /* fine */ }
     sfx.click();
     this.renderActions();
   }
@@ -1458,7 +1586,7 @@ export class Game {
       h = this.run && this.run.topples > 0
         ? `${touch ? 'Tap' : 'Click'} a tower to aim a topple at the enemies`
         : touch ? 'Drag to look around' : 'Drag to look around · F for speed';
-      if (this.dropping) h = `Pick a spot next to your fortress to drop a stone (${DROP_COST} gold). It crushes whatever is under it.`;
+      if (this.dropping) h = `Pick a spot next to your fortress to drop a stone (${this.dropCost()} gold). It crushes whatever is under it.`;
     }
     if (extra) h = extra;
     if (h !== this.hint) {
@@ -1622,7 +1750,7 @@ export class Game {
     cvs.addEventListener('pointermove', e => {
       this.lastPointer = { x: e.clientX, y: e.clientY };
       if (this.phase === 'day') { if (this.demolishing) this.updateDemolishGhost(); else this.updateGhost(); }
-      if (this.phase === 'night') { if (this.dropping) { const p = this.dropPlacement(); if (p?.cells.length) this.r.setGhost(p.cells, p.ok); else this.r.clearGhost(); } else this.updateToppleGhost(); }
+      if (this.phase === 'night') { if (this.shoring) { this.r.clearGhost(); return; } if (this.dropping) { const p = this.dropPlacement(); if (p?.cells.length) this.r.setGhost(p.cells, p.ok); else this.r.clearGhost(); } else this.updateToppleGhost(); }
     });
     cvs.addEventListener('pointerup', e => {
       const d = this.downAt;
@@ -1631,6 +1759,7 @@ export class Game {
       this.lastPointer = { x: e.clientX, y: e.clientY };
       if (this.phase === 'night') {
         if (this.dropping) { if (d.b === 0) this.tryDrop(e.pointerType !== 'mouse'); else this.toggleDrop(); return; }
+        if (this.shoring) { if (d.b === 0) this.tryShore(); else this.toggleShore(); return; }
         if (d.b === 2) return this.turnTopple();
         if (d.b !== 0) return;
         if (e.pointerType !== 'mouse') {
@@ -1671,6 +1800,9 @@ export class Game {
       if (this.phase === 'night' && k === 'f') this.toggleSpeed();
       if (this.phase === 'night' && k === 'r') this.turnTopple();
       if (this.phase === 'night' && k === 'd') this.toggleDrop();
+      if (this.phase === 'night' && (k === 'p' || k === 'escape')) this.togglePause();
+      if (this.phase === 'night' && k === 'g') this.rally();
+      if (this.phase === 'night' && k === 'h') this.toggleShore();
       if (this.phase === 'night' && k === 'a') $('actions').querySelector<HTMLElement>('[data-act=aim]')?.click();
     });
   }

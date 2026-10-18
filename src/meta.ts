@@ -3,7 +3,7 @@ import { FounderId } from './pieces';
 
 export type RelicId =
   | 'cartographer' | 'bulwark' | 'prism' | 'firestorm' | 'deep_roots' | 'masons_guild'
-  | 'frontier' | 'seismic' | 'thrift' | 'spyglass' | 'mortar' | 'reinforced'
+  | 'frontier' | 'seismic' | 'thrift' | 'vault' | 'spyglass' | 'mortar' | 'reinforced'
   | 'lightning_rod' | 'arches' | 'gravity_well' | 'plumb_line' | 'tapestry' | 'focus_lens' | 'mosaic'
   | 'domino' | 'storm_caller' | 'tipping_point';
 
@@ -19,6 +19,7 @@ export const RELICS: RelicDef[] = [
   { id: 'frontier', name: 'Frontier', icon: '▭', price: 8, desc: '+1 gold whenever you place a piece entirely on the ground.' },
   { id: 'seismic', name: 'Seismic Core', icon: '◎', price: 10, desc: 'The core pulse hits 3x harder and reaches further.' },
   { id: 'thrift', name: 'Thrift', icon: '◇', price: 7, desc: 'Shop prices are 30% lower.' },
+  { id: 'vault', name: 'Treasury Vault', icon: '⊞', price: 9, desc: 'Every morning, +1 gold for every 10 gold you are saving (up to +4).' },
   { id: 'spyglass', name: 'Spyglass', icon: '◉', price: 11, desc: 'All turret blocks get +1 range.' },
   { id: 'mortar', name: 'Mortar', icon: '▤', price: 9, desc: 'Blocks above ground level get +50% HP.' },
   { id: 'reinforced', name: 'Reinforced Core', icon: '✚', price: 9, desc: '+5 max core HP, and fully heals the core.' },

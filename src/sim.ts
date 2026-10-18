@@ -56,7 +56,7 @@ export interface ContractDef {
 export const CONTRACTS: Record<ContractId, ContractDef> = {
   standard: { id: 'standard', name: 'Normal night', icon: '☾', desc: 'No surprises.', budget: 1 },
   calm: { id: 'calm', name: 'Quiet night', icon: '☁', desc: '30% fewer enemies. No reward.', budget: 0.7 },
-  bounty: { id: 'bounty', name: 'Bounty hunt', icon: '◎', desc: '50% more enemies. Earn +10 gold if you survive.', budget: 1.5, gold: 10 },
+  bounty: { id: 'bounty', name: 'Bounty hunt', icon: '◎', desc: '30% more enemies. Earn +10 gold if you survive.', budget: 1.3, gold: 10 },
   skyward: { id: 'skyward', name: 'Sky raid', icon: '◇', desc: 'Mostly fliers and bombers. Pick a free relic next morning.', budget: 1.1, weights: { flier: 5, bomber: 3 }, relic: true },
   siege: { id: 'siege', name: 'Siege', icon: '■', desc: 'Brutes and bulwarks march in. You get +1 topple tonight and +6 gold.', budget: 1.15, weights: { brute: 3, bulwark: 3 }, gold: 6, topple: 1 },
 };
@@ -212,6 +212,8 @@ export class Night {
   private gustCd = 7;
   private stormCd = 5;
   private dominoes: { x: number; y: number; d: number; t: number; chain: number }[] = [];
+  /** seconds of Rally left: turrets reload twice as fast */
+  rally = 0;
   /** toppled towers still swinging down; they crush when they land */
   private impacts: { cells: { x: number; y: number; z: number; mat: MatId }[]; d: number; chain: number; t: number }[] = [];
   private bellCd = 2;
@@ -375,8 +377,18 @@ export class Night {
   }
 
   /** Ground enemies standing on any of these cells. */
-  enemiesOn(cells: { x: number; y: number }[]): number {
-    return this.enemies.filter(e => !e.dead && !e.hidden && e.mode !== 'fly' && cells.some(c => Math.hypot(e.pos.x - c.x, e.pos.y - c.y) < 0.75)).length;
+  enemiesOn(cells: { x: number; y: number }[], ahead = 0): number {
+    return this.enemies.filter(e => {
+      if (e.dead || e.hidden || e.mode === 'fly') return false;
+      // look ahead along the enemy's current step: a topple lands a moment after the click
+      const p = e.pos.clone();
+      if (ahead && e.next && !e.chewing) {
+        const d = new THREE.Vector2(e.next.x, e.next.y).sub(p);
+        const len = d.length();
+        if (len > 0.01) p.addScaledVector(d, Math.min(len, e.def.speed * (1 - e.slow) * ahead) / len);
+      }
+      return cells.some(c => Math.hypot(p.x - c.x, p.y - c.y) < 0.75);
+    }).length;
   }
 
   /**
@@ -502,7 +514,7 @@ export class Night {
     // turrets
     for (const tu of this.turrets) {
       if (tu.mat === 'ward') continue;
-      tu.cd -= dt;
+      tu.cd -= dt * (this.rally > 0 ? 2 : 1);
       if (tu.cd > 0) continue;
       const from = world(tu.x, tu.y, tu.z + 0.8);
       if (tu.mat === 'crystal') {
@@ -595,6 +607,7 @@ export class Night {
     }
 
     this.weather(dt);
+    this.rally = Math.max(0, this.rally - dt);
     for (const im of this.impacts) im.t -= dt;
     for (const im of this.impacts.filter(im => im.t <= 0)) this.landTopple(im.cells, im.d, im.chain);
     this.impacts = this.impacts.filter(im => im.t > 0);
@@ -848,6 +861,21 @@ export class Night {
   private hitCore(e: Enemy) {
     e.dead = true;
     this.hooks.coreDamage(e.def.coreDmg, e.type, this.enemyWorld(e));
+  }
+
+  /** Turrets reload twice as fast for a few seconds. */
+  rallyNow(seconds: number) {
+    this.rally = seconds;
+    for (const tu of this.turrets) this.r.ring(world(tu.x, tu.y, tu.z + 1), 0.8, 0xffd34a, 0.5);
+    sfx.unlock();
+  }
+
+  /** Strengthen one column: its blocks are fully repaired and gain 50% max HP for the rest of the run. */
+  shoreUp(x: number, y: number) {
+    for (const b of this.board.col(x, y)) if (b) { b.maxHp = Math.round(b.maxHp * 1.5); b.hp = b.maxHp; }
+    this.r.ring(world(x, y, 0.1), 1.1, 0xfff1d6, 0.6);
+    for (let z = 0; z < this.board.height(x, y); z++) this.r.kickBlock(this.board.col(x, y)[z]?.id ?? -1, 3);
+    sfx.place();
   }
 
   dispose() {

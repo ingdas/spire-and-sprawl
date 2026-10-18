@@ -41,7 +41,7 @@ The rest is polish, and there's a lot of it. It's listed below.
 | ✅ 12 | Enemies are tiny next to the blocks, and shards look like the pink attack arrow and the floating rocks. | Scale enemies up about 30%, give each type an outline colour by threat tier, and recolour the attack arrows so they never share enemy colours. | P1 | S |
 | 13 | Turret shots are hairlines. You can't see who is doing the work. | Thicker beams with a muzzle flash, shells with a trail, and hit sparks on enemies. Each turret type should have its own effect shape. | P1 | M |
 | ✅ 14 | When the core loses HP there's no indication which enemy did it or from where (night 9: 8 HP gone, unexplained). | Arrow at the screen edge pointing to the hit direction, plus a floating "−2 Brute" at the core. The end screen lists *what dealt core damage* (the sim already tracks it per type). | P1 | S |
-| 15 | You can't see where enemies will walk, which is the whole point of placing walls. | In the day, faintly animate the path from each attacking side to the core, based on the current board. It updates live as you place pieces. | P1 | M |
+| ✅ 15 | You can't see where enemies will walk, which is the whole point of placing walls. | In the day, faintly animate the path from each attacking side to the core, based on the current board. It updates live as you place pieces. | P1 | M |
 | 16 | Turret ranges are only visible when you hover in the day. | At night, holding a key (or the "eye" button on phones) shows all turret ranges and the slow fields. | P2 | S |
 | ✅ 17 | Tall towers poke out behind the top bar (nights 3, 7 and 9), and the core gets hidden behind blocks (day 1, after building). | The camera auto-frames to keep the tallest tower and the core in view. When something blocks the core, show its outline through the blocks (x-ray). | P1 | M |
 | 18 | Enemies off-screen or behind towers are invisible. | Edge-of-screen markers for off-screen enemies, and x-ray outlines for enemies behind blocks. | P2 | M |
@@ -55,25 +55,25 @@ The rest is polish, and there's a lot of it. It's listed below.
 
 | # | Problem (evidence) | Change | Pri | Size |
 |---|---|---|---|---|
-| 24 | The night is mostly watching. The only actions are one topple, a drop stone and changing the aim. | Add 1–2 more night actions you spend from a small per-night budget: *rally* (turrets near the click fire twice as fast for 3 s), *shore up* (+50% HP to one column), *recall* (cancel a topple charge for gold). | P1 | M |
-| 25 | You get one topple a night, and it's the most fun thing in the game. | Rebuild topples per night: +1 topple for every 15 kills, so good defence pays out more toppling. | P2 | S |
-| 26 | The topple preview counts enemies where they are when you click, but the crush lands 0.4 s later. | Aim the preview ahead: show where the enemies will be when the tower lands, as a ghost marker. | P2 | S |
-| 27 | Drop stone costs 3 gold flat; at 134 gold that's free. | Cost goes up within a night (3, 5, 8, …) and the base cost rises each act. | P2 | S |
-| 28 | Night speed resets to 1× every night. | Remember the chosen speed. Add an explicit pause button (and Esc/P to pause) with the board still inspectable while paused. | P1 | S |
-| 29 | Nights end abruptly and cut to the morning sheet. | A short "Night survived" moment: a dawn light sweep and a tally (enemies, damage taken, best topple), then the sheet. | P2 | S |
-| 30 | Night 1 is trivial (6 shards). Bounty nights can double the count (night 7: 42 enemies). | Smooth the curve. Night 1 should teach one thing (a wall). Cap bounty at +30% enemies but give elites; show the difficulty on the map node (item 39). | P1 | S |
+| ✅ 24 | The night is mostly watching. The only actions are one topple, a drop stone and changing the aim. | Add 1–2 more night actions you spend from a small per-night budget: *rally* (turrets near the click fire twice as fast for 3 s), *shore up* (+50% HP to one column), *recall* (cancel a topple charge for gold). | P1 | M |
+| ✅ 25 | You get one topple a night, and it's the most fun thing in the game. | Rebuild topples per night: +1 topple for every 15 kills, so good defence pays out more toppling. | P2 | S |
+| ✅ 26 | The topple preview counts enemies where they are when you click, but the crush lands 0.4 s later. | Aim the preview ahead: show where the enemies will be when the tower lands, as a ghost marker. | P2 | S |
+| ✅ 27 | Drop stone costs 3 gold flat; at 134 gold that's free. | Cost goes up within a night (3, 5, 8, …) and the base cost rises each act. | P2 | S |
+| ✅ 28 | Night speed resets to 1× every night. | Remember the chosen speed. Add an explicit pause button (and Esc/P to pause) with the board still inspectable while paused. | P1 | S |
+| ✅ 29 | Nights end abruptly and cut to the morning sheet. | A short "Night survived" moment: a dawn light sweep and a tally (enemies, damage taken, best topple), then the sheet. | P2 | S |
+| ✅ 30 | Night 1 is trivial (6 shards). Bounty nights can double the count (night 7: 42 enemies). | Smooth the curve. Night 1 should teach one thing (a wall). Cap bounty at +30% enemies but give elites; show the difficulty on the map node (item 39). | P1 | S |
 | 31 | Enemy spawns have no source, they just appear at the edge. | Spawn gates on each attacking side: a portal or tear that opens at dusk and closes when the wave is done. | P3 | M |
 
 ## D. Economy and decisions
 
 | # | Problem (evidence) | Change | Pri | Size |
 |---|---|---|---|---|
-| 32 | Gold piles up: 80 by day 7 and 134 by night 7, with nothing to spend it on between shops. | Add gold sinks you can use any day: buy one extra piece for the day (cost rising per use), a paid reroll of the hand, and a paid extra demolish. | P1 | M |
+| ✅ 32 | Gold piles up: 80 by day 7 and 134 by night 7, with nothing to spend it on between shops. | Add gold sinks you can use any day: buy one extra piece for the day (cost rising per use), a paid reroll of the hand, and a paid extra demolish. | P1 | M |
 | 33 | Shop prices don't scale with how much gold you have, and relic prices only rise by +3 per relic owned. | Prices scale by act, and each act's shop gets a *premium* row (rare relics or unique blocks at 20–30 gold). | P2 | S |
-| 34 | Interest (+1 per 10, max 3) hardly matters once gold piles up. | Remove interest, or turn it into a relic ("Treasury Vault"). The baseline should push you to spend. | P2 | S |
+| ✅ 34 | Interest (+1 per 10, max 3) hardly matters once gold piles up. | Remove interest, or turn it into a relic ("Treasury Vault"). The baseline should push you to spend. | P2 | S |
 | 35 | The morning piece pick has no information except shape and material. | Show what the piece *adds*: "+1 crystal turret", "+3 wall", and a mini "fits your build" note if it makes a combo with blocks you already own. | P2 | M |
 | 36 | "Skip: take 2 gold" is never worth it. | Make skipping meaningful: *skip = the bag shrinks* (removes a random stone piece), or skipping gives 1 seal. | P3 | S |
-| 37 | With no cap on bag size, decks bloat (21 pieces by night 9), so good pieces come up rarely. | Hand quality matters: show the bag's composition (material counts) on the bag button, and offer more ways to remove pieces. | P2 | S |
+| ✅ 37 | With no cap on bag size, decks bloat (21 pieces by night 9), so good pieces come up rarely. | Hand quality matters: show the bag's composition (material counts) on the bag button, and offer more ways to remove pieces. | P2 | S |
 
 ## E. The map
 
@@ -82,7 +82,7 @@ The rest is polish, and there's a lot of it. It's listed below.
 | ✅ 38 | **It's not clear where you are on the map.** The current spot only has a thin red ring, and nothing marks "you are here". | Put a small island token on the current node, and draw the walked path as a bold solid line. Grey out everything you can no longer reach. | P1 | S |
 | ✅ 39 | Night squares use cryptic icons (◎ ◇ ■ ☁), but the legend only explains "☾ Night". | Show each night type in the legend, plus a difficulty chip on the node (1–3 skulls) and the reward chip (+10 g, relic). | P1 | S |
 | 40 | Weather badges on nodes are tiny glyphs (◐ ≈ ϟ) with no explanation. | A larger badge, and the selected node's info panel explains the weather's effect. | P2 | S |
-| 41 | The map is the first thing a brand-new player sees, before they've played a single night. | Skip the map for night 1 on a player's first run. Show the map after the first morning, with a one-line coach mark. | P1 | S |
+| ✅ 41 | The map is the first thing a brand-new player sees, before they've played a single night. | Skip the map for night 1 on a player's first run. Show the map after the first morning, with a one-line coach mark. | P1 | S |
 | 42 | The right side of the map screen is empty space on desktop. | Use it: the run so far (relics, bag summary, core HP trend) and a preview of tonight's enemies for a selected night. | P2 | S |
 | 43 | Every act has exactly the same row structure. | Vary it by act: act 2 has an elite fork, act 3 a double-shop row. Add rare hidden nodes (`?` that is a battle or a treasure). | P3 | M |
 | 44 | Choosing a node moves you instantly. | Animate the token travelling along the edge before entering the stop. | P3 | S |
@@ -120,7 +120,7 @@ The rest is polish, and there's a lot of it. It's listed below.
 | 66 | Journeys are just a sheet of text, even though the island flies to a new land. | A 3-second cutscene: the camera pulls back, the island lifts and clouds rush past, then it lands in the new biome's colours. | P2 | M |
 | 67 | Only 5 founders, and the first is forced on a new player. | Make founder differences bigger: each has a starting relic and a signature unique block. | P3 | M |
 | ✅ 68 | Portrait phone framing cuts off the island's sides, and the top bar drops Tallest and Area, which matter for tall vs wide. | Zoom the portrait camera out to fit, and show Tallest and Area as small chips under the top bar. | P1 | S |
-| 69 | On phones the hand and actions take a third of the screen, and the night buttons wrap to two rows. | A single-row night bar with icon buttons, and a collapsible hand that can be swiped down. | P2 | M |
+| ✅ 69 | On phones the hand and actions take a third of the screen, and the night buttons wrap to two rows. | A single-row night bar with icon buttons, and a collapsible hand that can be swiped down. | P2 | M |
 
 ---
 

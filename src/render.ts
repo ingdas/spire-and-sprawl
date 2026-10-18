@@ -214,6 +214,9 @@ export class Renderer {
   private focusY = 1.5;
   private validRoot = new THREE.Group();
   private linkRoot = new THREE.Group();
+  private pathRoot = new THREE.Group();
+  private paths: { pts: THREE.Vector3[]; len: number[]; total: number }[] = [];
+  private pathMarks: THREE.InstancedMesh | null = null;
   private coreXray: THREE.Mesh;
   private coreSq = 0;
   private coreSqv = 0;
@@ -280,7 +283,7 @@ export class Renderer {
     this.coreXray.renderOrder = 30;
     this.coreXray.raycast = noRaycast;
     this.coreGem.add(this.coreXray);
-    this.scene.add(this.core, this.blockRoot, this.ghostRoot, this.ringRoot, this.telegraphRoot, this.validRoot, this.linkRoot);
+    this.scene.add(this.core, this.blockRoot, this.ghostRoot, this.ringRoot, this.telegraphRoot, this.validRoot, this.linkRoot, this.pathRoot);
 
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -420,6 +423,52 @@ export class Renderer {
     l.renderOrder = 15;
     l.raycast = noRaycast;
     this.linkRoot.add(l);
+  }
+
+  /** Chevrons marching along the routes enemies will take tonight. */
+  setPaths(polys: { x: number; y: number }[][]) {
+    for (const o of this.pathRoot.children) disposeTree(o);
+    this.pathRoot.clear();
+    this.pathMarks = null;
+    this.paths = polys.filter(p => p.length > 1).map(p => {
+      const pts = p.map(c => world(c.x, c.y, 0.06));
+      const len = [0];
+      for (let i = 1; i < pts.length; i++) len.push(len[i - 1] + pts[i].distanceTo(pts[i - 1]));
+      return { pts, len, total: len[len.length - 1] };
+    });
+    if (!this.paths.length) return;
+    const count = this.paths.reduce((s, p) => s + Math.ceil(p.total / 1.1), 0);
+    const geo = new THREE.ConeGeometry(0.13, 0.32, 3).rotateX(Math.PI / 2);
+    this.pathMarks = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ color: 0xffb02e, transparent: true, opacity: 0.85, depthWrite: false }), count);
+    this.pathMarks.raycast = noRaycast;
+    this.pathMarks.userData.age = 0;
+    this.pathRoot.add(this.pathMarks);
+  }
+
+  private updatePaths(dt: number) {
+    const m = this.pathMarks;
+    if (!m) return;
+    m.userData.age += dt;
+    (m.material as THREE.MeshBasicMaterial).opacity = Math.min(0.85, m.userData.age * 2);
+    const q = new THREE.Quaternion(), sc = new THREE.Vector3(1, 1, 1), mat = new THREE.Matrix4(), fwd = new THREE.Vector3(0, 0, 1);
+    let k = 0;
+    for (const p of this.paths) {
+      const n = Math.ceil(p.total / 1.1);
+      for (let i = 0; i < n; i++) {
+        const d = (this.time * 1.4 + i * 1.1) % p.total;
+        let j = 1;
+        while (j < p.len.length - 1 && p.len[j] < d) j++;
+        const a = p.pts[j - 1], b = p.pts[j], f = (d - p.len[j - 1]) / Math.max(1e-6, p.len[j] - p.len[j - 1]);
+        const pos = a.clone().lerp(b, f);
+        q.setFromUnitVectors(fwd, b.clone().sub(a).normalize());
+        // fade in at the edge, out at the core
+        const edge = Math.min(1, d / 0.8, (p.total - d) / 0.8);
+        sc.setScalar(Math.max(0.001, edge));
+        mat.compose(pos, q, sc);
+        m.setMatrixAt(k++, mat);
+      }
+    }
+    m.instanceMatrix.needsUpdate = true;
   }
 
   /** Screen position of a world point, for HUD markers. */
@@ -1089,6 +1138,7 @@ export class Renderer {
       }
     }
     this.placeGhost(realDt);
+    this.updatePaths(realDt);
     for (const l of this.linkRoot.children) ((l as THREE.LineSegments).material as THREE.LineBasicMaterial).opacity = 0.45 + Math.sin(t * 4) * 0.25;
     for (const l of this.validRoot.children) {
       l.userData.age += realDt;

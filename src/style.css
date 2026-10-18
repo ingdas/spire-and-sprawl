@@ -675,3 +675,15 @@ kbd { font-family: var(--mono); font-size: 10.5px; font-weight: 600; border: 1px
 @keyframes hot { 50% { box-shadow: 0 0 0 6px rgba(255, 211, 74, 0.25); scale: 1.06; } }
 #relics { cursor: pointer; }
 table.hurt td:first-child svg { vertical-align: -2px; margin-right: 6px; }
+
+/* paused nights: the world dims a touch and says so */
+body.paused #app { filter: saturate(0.6) brightness(0.85); transition: filter 0.2s; }
+body.paused::after { content: 'Paused'; position: fixed; top: 96px; left: 50%; transform: translateX(-50%); z-index: 6; pointer-events: none; font: 800 44px/1 var(--display); letter-spacing: 0.06em; text-transform: uppercase; color: #fff; -webkit-text-stroke: 1.5px #25202e; text-shadow: 3px 3px 0 #25202e; animation: pop 0.3s cubic-bezier(0.3, 1.7, 0.5, 1); }
+
+/* phones: the night bar stays two short rows */
+@media (max-width: 760px) {
+  #actions .tabs { gap: 5px; justify-content: center; }
+  #actions .tab { font-size: 13.5px; padding: 6px 8px 5px; }
+  #actions .topples { font-size: 15px; padding: 4px 9px 3px; }
+  #actions .topples b { font-size: 19px; }
+}
