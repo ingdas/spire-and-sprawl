@@ -28,7 +28,7 @@ export interface MatDef {
 export const MATS: Record<MatId, MatDef> = {
   stone: {
     id: 'stone', name: 'Stone', color: 0xd8cbb3, hp: 10, turret: false,
-    desc: 'Sturdy filler. Raises everything above it.',
+    desc: 'Sturdy wall. A turret standing on stone shoots 1 cell further.',
   },
   garden: {
     id: 'garden', name: 'Garden', color: 0x86d16f, hp: 4, turret: false,

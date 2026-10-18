@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { Board } from './board';
 import { BiomeDef } from './biomes';
 import { CORE, ENEMIES, EnemyId, MATS, MatId, N, PALETTE } from './config';
@@ -74,12 +75,83 @@ const GEO = {
   beam: new THREE.CylinderGeometry(0.045, 0.045, 1, 6),
   shell: new THREE.IcosahedronGeometry(0.13, 0),
   debris: new THREE.TetrahedronGeometry(0.12),
+  strut: new THREE.BoxGeometry(0.98, 0.09, 0.98),
   puff: new THREE.IcosahedronGeometry(0.2, 0),
   arrow: new THREE.ConeGeometry(0.45, 0.9, 3),
   anvil: new THREE.BoxGeometry(0.62, 0.2, 0.34),
   bell: new THREE.ConeGeometry(0.22, 0.32, 8, 1, true),
   mirror: new THREE.BoxGeometry(0.46, 0.46, 0.05),
 };
+
+/** A rough boulder: a box with its corners pushed about. */
+function boulder() {
+  const g = new THREE.BoxGeometry(0.96, 0.94, 0.96, 2, 2, 2);
+  const p = g.attributes.position;
+  const seed = (i: number) => Math.sin(i * 12.9898) * 43758.5453 % 1;
+  for (let i = 0; i < p.count; i++) {
+    const k = 0.045;
+    p.setXYZ(i, p.getX(i) + seed(i) * k, p.getY(i) + seed(i + 7) * k, p.getZ(i) + seed(i + 13) * k);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * Every material has its own silhouette, so towers read by shape as well as colour:
+ * bevelled stone, faceted crystal, a tapered ember brazier, an eight-sided ward, a rough rock.
+ */
+const BLOCK_GEO: Partial<Record<MatId, THREE.BufferGeometry>> = {
+  stone: new RoundedBoxGeometry(0.94, 0.94, 0.94, 2, 0.07),
+  crystal: new RoundedBoxGeometry(0.9, 0.94, 0.9, 1, 0.17),
+  ember: new THREE.CylinderGeometry(0.67, 0.56, 0.94, 4, 1).rotateY(Math.PI / 4),
+  ward: new THREE.CylinderGeometry(0.5, 0.5, 0.94, 8, 1).rotateY(Math.PI / 8),
+  beacon: new RoundedBoxGeometry(0.9, 0.94, 0.9, 2, 0.12),
+  rock: boulder(),
+};
+
+/** Grey-scale face patterns, tinted by the block colour: bricks, facets, a grate, a rune, a lantern. */
+function facePattern(mat: MatId): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  const shade = (v: number) => `rgb(${v * 255},${v * 255},${v * 255})`;
+  g.fillStyle = shade(1); g.fillRect(0, 0, 64, 64);
+  g.strokeStyle = shade(0.8); g.lineWidth = 4; g.strokeRect(2, 2, 60, 60);
+  g.lineWidth = 3;
+  if (mat === 'stone') {
+    g.strokeStyle = shade(0.74);
+    for (const y of [22, 43]) { g.beginPath(); g.moveTo(0, y); g.lineTo(64, y); g.stroke(); }
+    for (const [x, y0, y1] of [[32, 0, 22], [16, 22, 43], [48, 22, 43], [32, 43, 64]]) { g.beginPath(); g.moveTo(x, y0); g.lineTo(x, y1); g.stroke(); }
+  } else if (mat === 'crystal') {
+    g.strokeStyle = shade(0.82);
+    g.beginPath(); g.moveTo(0, 40); g.lineTo(40, 0); g.moveTo(24, 64); g.lineTo(64, 24); g.stroke();
+    g.fillStyle = shade(1); g.globalAlpha = 0.9; g.fillRect(10, 8, 6, 20); g.globalAlpha = 1;
+  } else if (mat === 'ember') {
+    g.fillStyle = shade(0.55);
+    for (const y of [18, 30, 42]) g.fillRect(8, y, 48, 5);
+  } else if (mat === 'ward') {
+    g.strokeStyle = shade(0.66);
+    g.beginPath(); g.arc(32, 32, 16, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.moveTo(32, 12); g.lineTo(32, 52); g.moveTo(18, 40); g.lineTo(46, 24); g.stroke();
+  } else if (mat === 'beacon') {
+    g.fillStyle = shade(0.6); g.fillRect(16, 14, 32, 36);
+    g.fillStyle = shade(1); g.fillRect(21, 19, 22, 26);
+  } else if (mat === 'garden') {
+    g.fillStyle = shade(0.8);
+    for (const [x, y] of [[14, 16], [40, 12], [26, 34], [50, 40], [12, 48], [36, 54]]) { g.beginPath(); g.ellipse(x, y, 5, 3, 0.6, 0, Math.PI * 2); g.fill(); }
+  } else if (mat === 'rock') {
+    g.strokeStyle = shade(0.62);
+    g.beginPath(); g.moveTo(10, 8); g.lineTo(26, 30); g.lineTo(20, 52); g.moveTo(26, 30); g.lineTo(50, 38); g.lineTo(58, 56); g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const PATTERNS = new Map<MatId, THREE.Texture>();
+const patternOf = (mat: MatId) => { let t = PATTERNS.get(mat); if (!t) { t = facePattern(mat); PATTERNS.set(mat, t); } return t; };
+const goldOutline = new THREE.MeshBasicMaterial({ color: 0xf2c45a, side: THREE.BackSide });
+const timberMat = toonLazy(0x6b4a32);
+function toonLazy(color: number) { let m: THREE.MeshToonMaterial | null = null; return () => (m ??= toon(color)); }
 
 const ENEMY_GEO: Record<EnemyId, THREE.BufferGeometry> = {
   shard: new THREE.TetrahedronGeometry(ENEMIES.shard.size),
@@ -106,6 +178,8 @@ interface BlockView {
   sq: number; sqv: number; flash: number; emblemAge: number;
   /** an emblem that just got covered, shrinking away */
   emblemOut: THREE.Object3D | null; emblemOutAge: number;
+  /** emblem size: bigger on taller stacks of one material */
+  emblemBase: number;
 }
 
 /** A block on its way out: either popping in place or (toss) swinging off the edge and dropping away. */
@@ -139,6 +213,7 @@ export class Renderer {
   /** how high the camera looks: follows the tallest tower */
   private focusY = 1.5;
   private validRoot = new THREE.Group();
+  private linkRoot = new THREE.Group();
   private coreXray: THREE.Mesh;
   private coreSq = 0;
   private coreSqv = 0;
@@ -205,7 +280,7 @@ export class Renderer {
     this.coreXray.renderOrder = 30;
     this.coreXray.raycast = noRaycast;
     this.coreGem.add(this.coreXray);
-    this.scene.add(this.core, this.blockRoot, this.ghostRoot, this.ringRoot, this.telegraphRoot, this.validRoot);
+    this.scene.add(this.core, this.blockRoot, this.ghostRoot, this.ringRoot, this.telegraphRoot, this.validRoot, this.linkRoot);
 
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -329,6 +404,24 @@ export class Renderer {
     this.validRoot.add(tiles);
   }
 
+  /** Glowing threads from each beacon to the turrets it powers. */
+  setLinks(pairs: { a: { x: number; y: number; z: number }; b: { x: number; y: number; z: number } }[]) {
+    for (const o of this.linkRoot.children) disposeTree(o);
+    this.linkRoot.clear();
+    if (!pairs.length) return;
+    const pts: number[] = [];
+    for (const { a, b } of pairs) {
+      const p = world(a.x, a.y, a.z + 0.5), q = world(b.x, b.y, b.z + 0.5);
+      pts.push(p.x, p.y, p.z, q.x, q.y, q.z);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xfff1a6, transparent: true, opacity: 0.8, depthTest: false }));
+    l.renderOrder = 15;
+    l.raycast = noRaycast;
+    this.linkRoot.add(l);
+  }
+
   /** Screen position of a world point, for HUD markers. */
   project(v: THREE.Vector3) {
     const p = v.clone().project(this.camera);
@@ -349,8 +442,8 @@ export class Renderer {
       let v = this.blockViews.get(b.id);
       const target = world(x, y, z + 0.5);
       if (!v) {
-        const mat = toon(MATS[b.mat].color);
-        const mesh = outlined(GEO.block, mat, 0.05);
+        const mat = toon(MATS[b.mat].color, { map: patternOf(b.mat) });
+        const mesh = outlined(BLOCK_GEO[b.mat] ?? GEO.block, mat, 0.05);
         // new blocks drop in from above; lower blocks of a piece lead, so it lands bottom-first
         const pos = target.clone().add(new THREE.Vector3(0, 4.5, 0));
         mesh.position.copy(pos);
@@ -359,13 +452,30 @@ export class Renderer {
         mesh.userData.cell = { x, y };
         this.blockRoot.add(mesh);
         mat.emissive.setHex(MATS[b.mat].color).multiplyScalar(this.nightAmt * (MATS[b.mat].turret ? 0.38 : 0.14));
-        v = { mesh, mat, target, emblem: null, matId: b.mat, x, y, pos, vy: 0, delay: z * 0.035 + Math.random() * 0.04, tip: null, sq: 0, sqv: 0, flash: 0, emblemAge: 1, emblemOut: null, emblemOutAge: 0 };
+        v = { mesh, mat, target, emblem: null, matId: b.mat, x, y, pos, vy: 0, delay: z * 0.035 + Math.random() * 0.04, tip: null, sq: 0, sqv: 0, flash: 0, emblemAge: 1, emblemOut: null, emblemOutAge: 0, emblemBase: 1 };
         this.blockViews.set(b.id, v);
       } else if (Math.hypot(target.x - v.pos.x, target.z - v.pos.z) > 0.3 && !v.tip) {
         v.tip = this.makeTip(v.pos, target);
       }
       v.target.copy(target);
       if (v.tip) v.tip.to.copy(target);
+      // gilded blocks wear a gold outline instead of the ink one
+      const hull = v.mesh.children[0] as THREE.Mesh;
+      if (b.gilded && hull.material !== goldOutline) { hull.material = goldOutline; hull.scale.multiplyScalar(1.04); }
+      // an overhang gets a timber beam underneath, so it reads as a bridge and not a glitch
+      const hollow = z > 0 && !board.blockAt(x, y, z - 1);
+      const strut = v.mesh.getObjectByName('strut');
+      if (hollow && !strut) {
+        const beam = outlined(GEO.strut, timberMat(), 0.03, false);
+        beam.name = 'strut';
+        beam.position.y = -0.5;
+        beam.raycast = noRaycast;
+        v.mesh.add(beam);
+      } else if (!hollow && strut) v.mesh.remove(strut);
+      // the emblem on a stack's top block grows with the stack
+      let stack = 0;
+      while (z - stack - 1 >= 0 && board.blockAt(x, y, z - stack - 1)?.mat === b.mat) stack++;
+      v.emblemBase = 1 + 0.22 * Math.min(4, stack);
       v.x = x; v.y = y;
       v.mesh.userData.cell = { x, y };
       const topOpen = !board.blockAt(x, y, z + 1);
@@ -916,8 +1026,8 @@ export class Renderer {
       }
       if (v.emblem && v.emblemAge < 1) {
         v.emblemAge += dt / 0.4;
-        v.emblem.scale.setScalar(Math.max(0.001, easeOutBack(clamp01(v.emblemAge))));
-      }
+        v.emblem.scale.setScalar(Math.max(0.001, v.emblemBase * easeOutBack(clamp01(v.emblemAge))));
+      } else if (v.emblem) v.emblem.scale.setScalar(v.emblemBase);
       if (v.emblem) {
         v.emblem.traverse(o => {
           if (o.userData.spin) o.rotation.y += realDt * o.userData.spin;
@@ -979,6 +1089,7 @@ export class Renderer {
       }
     }
     this.placeGhost(realDt);
+    for (const l of this.linkRoot.children) ((l as THREE.LineSegments).material as THREE.LineBasicMaterial).opacity = 0.45 + Math.sin(t * 4) * 0.25;
     for (const l of this.validRoot.children) {
       l.userData.age += realDt;
       const peak = l.userData.fill ? 0.22 : 0.85;

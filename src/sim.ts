@@ -9,6 +9,10 @@ import { EnemyView, Renderer, world } from './render';
 export interface SpawnSpec { t: number; type: EnemyId; side: number }
 export interface Wave { sides: number[]; spawns: SpawnSpec[]; hpScale: number; elite: boolean; boss: boolean; guardian: EnemyId | null; weather: WeatherId | null; night: number }
 
+/** A turret standing directly on stone or rock shoots this much further. */
+export const FOUNDATION_RANGE = 1;
+export const isFoundation = (mat: MatId | undefined) => mat === 'stone' || mat === 'rock';
+
 export function turretRange(mat: MatId, z: number, has: (r: RelicId) => boolean, bonus = 0): number {
   const spec = TURRET[mat as 'crystal' | 'ember' | 'ward'];
   if (!spec) return 0;
@@ -281,7 +285,8 @@ export class Night {
       if (blk.mat === 'bell') this.bells.push({ x, y, z });
       if (blk.mat === 'omen') this.omens.push({ x, y });
       if (!MATS[blk.mat].turret || !b.exposed.has(blk.id)) continue;
-      const range = Math.max(1.2, turretRange(blk.mat, z, has, rangeBonus(this.hooks.mods, blk.mat)) - (this.wave.weather === 'fog' ? 1 : 0));
+      const footing = isFoundation(b.blockAt(x, y, z - 1)?.mat) ? FOUNDATION_RANGE : 0;
+      const range = Math.max(1.2, turretRange(blk.mat, z, has, rangeBonus(this.hooks.mods, blk.mat)) + footing - (this.wave.weather === 'fog' ? 1 : 0));
       let dmgMult = 1;
       const touching = new Set<MatId>();
       for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {

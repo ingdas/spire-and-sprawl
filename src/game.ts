@@ -5,7 +5,7 @@ import { CORE, ENEMIES, EnemyId, HAND_SIZE, MATS, MatId, N, NIGHTS, START_CORE_H
 import { CODEX, CodexDef, HEATS, Meta, RelicId, RunStats, SEALS, UPGRADES, relicDef } from './meta';
 import { FOUNDERS, FounderId, Piece, make, pivotOf, randomPiece, rotatePiece, uniquePiece } from './pieces';
 import { Renderer, world } from './render';
-import { AIMS, Aim, CONTRACTS, ContractId, Night, REACTIONS, WEATHER, STACK_BONUS, Wave, makeWave, rangeBonus, reactionOf, stackBelow, turretRange } from './sim';
+import { AIMS, Aim, CONTRACTS, ContractId, FOUNDATION_RANGE, Night, isFoundation, REACTIONS, WEATHER, STACK_BONUS, Wave, makeWave, rangeBonus, reactionOf, stackBelow, turretRange } from './sim';
 import { BIOMES, BiomeDef, BiomeId, actOf, randomCells, rollRoute } from './biomes';
 import { ActMap, DANGER, GUARDIAN_INFO, MapNode, STOPS, StopKind, ahead, makeMap, reachable } from './map';
 import { badge, blankPlate, callout, compass, detail, enemyGlyph, flushDrawings, impression, ledgerLine, plate, sec, sheet, stamp, tab } from './ui';
@@ -302,7 +302,7 @@ export class Game {
       body: `<div class="manual">
         ${item('1', 'Build by day', `You get ${HAND_SIZE} pieces each day. A piece lands on top of whatever is below it, so you can build <b>up</b> or <b>out</b>. Pieces must touch your buildings or the core. You can <b>keep</b> one piece for tomorrow and <b>demolish</b> 2 blocks a day.`)}
         ${item('2', 'Survive the night', 'Enemies come from the <b class="red">red</b> sides. They chew through the <b>bottom</b> block of a column to reach the core.')}
-        ${item('3', 'Tall towers', 'Turrets shoot further the higher they are. Stack the same material to make it stronger: three crystals on top of each other hit harder than one.')}
+        ${item('3', 'Tall towers', 'Turrets shoot further the higher they are. Stack the same material to make it stronger: three crystals on top of each other hit harder than one. A turret standing on stone (or rock) shoots 1 cell further.')}
         ${item('4', 'Topple!', 'At night, click a tower to knock it over. Every block that lands on an enemy crushes it, and the tower becomes a wall. What it is made of matters: ember splashes fire, crystal shatters into shards, ward leaves a slow field, garden drops gold. You get one topple per night.')}
         ${item('✦', 'Combos', 'Some blocks react when they touch (sides, above or below): crystal + ward = frost beams that slow, crystal + ember = spark beams that splash fire, ember + garden = smoke shells that slow. Hover a tower in the day to see its combos.')}
         ${item('◎', 'Gold tips', 'Every 10 gold you save earns +1 at dawn (up to +3). Starting the night with pieces still in hand pays +1 gold each. At night you can drop an emergency stone for 3 gold, and at a camp on the map you can make the core pulse hit harder.')}
@@ -813,9 +813,24 @@ export class Game {
     const run = this.run!;
     const st = run.board.stats();
     this.r.setFocus(st.tallest);
+    this.r.setLinks(this.beaconLinks());
     run.stats.maxTallest = Math.max(run.stats.maxTallest, st.tallest);
     run.stats.maxHollows = Math.max(run.stats.maxHollows, st.hollows);
     run.stats.maxUniques = Math.max(run.stats.maxUniques, [...run.board.blocks()].filter(b => MATS[b.b.mat].unique).length);
+  }
+
+  /** Which turrets each beacon powers (the 3x3x3 cube around it), for drawing the links. */
+  private beaconLinks() {
+    const b = this.run!.board;
+    const out: { a: { x: number; y: number; z: number }; b: { x: number; y: number; z: number } }[] = [];
+    for (const { x, y, z, b: blk } of b.blocks()) {
+      if (blk.mat !== 'beacon') continue;
+      for (let dz = -1; dz <= 1; dz++) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nb = b.blockAt(x + dx, y + dy, z + dz);
+        if (nb && MATS[nb.mat].turret) out.push({ a: { x, y, z }, b: { x: x + dx, y: y + dy, z: z + dz } });
+      }
+    }
+    return out;
   }
 
   // ======================= relics =======================
@@ -1511,7 +1526,8 @@ export class Game {
     const p = this.currentPlacement();
     if (!p || !p.cells.length) { this.r.clearGhost(); this.r.setRanges([]); this.setHint(); return; }
     this.r.setGhost(p.cells, p.ok);
-    const rings = p.cells.filter(c => MATS[c.mat].turret).map(c => ({ x: c.x, y: c.y, r: turretRange(c.mat, c.z, this.has, rangeBonus(this.mods(), c.mat)), color: MATS[c.mat].color }));
+    const below = (c: { x: number; y: number; z: number }) => p.cells.find(o => o.x === c.x && o.y === c.y && o.z === c.z - 1)?.mat ?? run.board.blockAt(c.x, c.y, c.z - 1)?.mat;
+    const rings = p.cells.filter(c => MATS[c.mat].turret).map(c => ({ x: c.x, y: c.y, r: turretRange(c.mat, c.z, this.has, rangeBonus(this.mods(), c.mat)) + (isFoundation(below(c)) ? FOUNDATION_RANGE : 0), color: MATS[c.mat].color }));
     this.r.setRanges(p.ok ? rings : []);
     this.setHint(p.ok ? undefined : `✕ ${p.reason}`);
   }
@@ -1526,9 +1542,11 @@ export class Game {
     let note = '';
     col.forEach((b, z) => {
       if (!b || !MATS[b.mat].turret || !run.board.exposed.has(b.id)) return;
-      rings.push({ x: cell.x, y: cell.y, r: turretRange(b.mat, z, this.has, rangeBonus(this.mods(), b.mat)), color: MATS[b.mat].color });
+      const footing = isFoundation(run.board.blockAt(cell.x, cell.y, z - 1)?.mat);
+      rings.push({ x: cell.x, y: cell.y, r: turretRange(b.mat, z, this.has, rangeBonus(this.mods(), b.mat)) + (footing ? FOUNDATION_RANGE : 0), color: MATS[b.mat].color });
       const n = stackBelow(run.board, cell.x, cell.y, z);
       const parts: string[] = [];
+      if (footing) parts.push(`stands on ${MATS[run.board.blockAt(cell.x, cell.y, z - 1)!.mat].name.toLowerCase()}: +${FOUNDATION_RANGE} range`);
       if (n) parts.push(`${MATS[b.mat].name} tower: ${n + 1} stacked · ${b.mat === 'ward' ? `+${(0.3 * n).toFixed(1)} range` : `+${Math.round(STACK_BONUS * n * 100)}% damage`}`);
       const touching = new Set<MatId>();
       for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
