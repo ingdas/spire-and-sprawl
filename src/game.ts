@@ -4,6 +4,7 @@ import { HEADLESS, PERF, Settings, loadSettings, saveSettings } from './settings
 import { Board, Placement } from './board';
 import { CORE, ENEMIES, applyColorBlind, EnemyId, HAND_SIZE, MATS, MatId, N, NIGHTS, UNIQUES } from './config';
 import { TUNE } from './tune';
+import { chartHtml, placeArt, stopIcon } from './chart';
 import { CODEX, CodexDef, HEATS, HEAT_COLORS, Meta, RelicId, RunStats, SEALS, UPGRADES, relicDef } from './meta';
 import { FOUNDERS, FounderId, Piece, make, pivotOf, randomPiece, rotatePiece, uniquePiece } from './pieces';
 import { Renderer, world } from './render';
@@ -166,6 +167,8 @@ export class Game {
 
   /** balance knobs (debug: bots change them live) */
   readonly tune = TUNE;
+  /** the act whose chart was last shown (a new act unrolls its chart) */
+  private chartAct = -1;
   /** debug: seed the game dice so a run replays exactly (null = back to Math.random) */
   readonly seedRandom = seedRandom;
   readonly rolls = rolls;
@@ -360,7 +363,7 @@ export class Game {
         ${item('9', 'Journeys', 'After nights 4 and 8 your island flies to a new land (Dunes, Glacier or Caldera) with new rules. On the way, blocks on the outer edge break off and very tall towers lose their tops.')}
         ${item('10', 'Wide bases', 'Gardens on the ground earn gold every morning. Every block is a wall enemies must chew through.')}
         ${item('11', 'Watch out', '<b class="red">Sappers</b> tunnel to your tallest tower and blow up its base. <b class="red">Brutes</b> show up more when you build wide.')}
-        ${item('12', 'The map', 'After each night you pick a free piece, then choose your path on the map. Red squares are nights (some are harder but pay more). The stops between them each do one thing: a shop, a camp to heal, a forge, treasure, a rare block or a mystery.')}
+        ${item('12', 'The map', 'After each night you pick a free piece, then choose your path on the map. Red wax seals are nights (the notches show how hard; harder ones pay more). The sketches between them are stops that each do one thing: a shop, a camp to heal, a forge, treasure, a rare block or a mystery.')}
         ${item('13', 'Seals & workshop', 'Every run earns seals ✠, even if you lose. Spend them in the workshop on permanent upgrades. Challenges give the most seals.')}
         ${item('14', 'Heat', `After your first win you can turn up the <b>heat</b> when you start a run. Each level adds one new rule on top of the ones before it (${HEATS.length} levels) and pays +20% seals. Win at a level to unlock the next one, and a flag for it flies on your core.`)}
         ${item('14', 'Controls', '<kbd>Click</kbd> place / topple · <kbd>R</kbd> rotate · drag to look around · <kbd>Q</kbd><kbd>E</kbd> turn the camera · <kbd>1</kbd>–<kbd>5</kbd> pick a piece · <kbd>K</kbd> keep for tomorrow · <kbd>X</kbd> demolish · <kbd>Z</kbd> undo · <kbd>Space</kbd> start the night · at night: <kbd>P</kbd> pause · <kbd>G</kbd> rally · <kbd>H</kbd> shore up · <kbd>D</kbd> drop stone · <kbd>V</kbd> ranges · <kbd>A</kbd> aim · <kbd>F</kbd> speed · <kbd>M</kbd> mute')}
@@ -375,6 +378,7 @@ export class Game {
     sfx.click();
     this.nums.clear();
     this.mapSel = -1;
+    this.chartAct = -1;
     this.r.clearAll();
     const meta = this.meta;
     const hot = meta.heat >= 2 ? 3 : 0;
@@ -1285,51 +1289,36 @@ export class Game {
     const sel = m.nodes[this.mapSel];
     const canGo = !!sel && next.includes(sel);
     acts.go = () => { if (canGo) this.enterNode(sel); };
-    // rows run bottom (start) to top (boss)
-    const X = (lane: number) => 20 + lane * 30;
-    const Y = (row: number) => 100 - ((row + 0.5) / m.rows) * 100;
-    // what's still reachable stays bright; the rest of the map fades back
-    const future = ahead(m);
-    const live = (id: number) => future.has(id) || m.visited.includes(id);
-    const edges = m.nodes.flatMap(a => a.next.map(id => {
-      const b = m.nodes[id];
-      const walked = m.visited.includes(a.id) && m.visited.includes(b.id);
-      const open = m.at === a.id;
-      const gone = !walked && !(live(a.id) && future.has(b.id));
-      return `<line x1="${X(a.lane)}" y1="${Y(a.row)}" x2="${X(b.lane)}" y2="${Y(b.row)}" class="${walked ? 'walked' : open ? 'open' : gone ? 'gone' : ''}"/>`;
-    })).join('');
-    const nodes = m.nodes.map(n => {
-      const info = this.nodeInfo(n);
-      const can = next.includes(n);
-      const cls = [n.kind === 'battle' || n.kind === 'guardian' ? 'fight' : 'stop', `k-${n.kind}`, can ? 'can' : '', m.visited.includes(n.id) ? 'done' : '', m.at === n.id ? 'here' : '', this.mapSel === n.id ? 'sel' : '', live(n.id) ? '' : 'gone'].join(' ');
-      const tag = n.night ? `<span class="nt">${n.night}</span>` : '';
-      const wx = n.weather ? `<span class="wx">${WEATHER[n.weather].icon}</span>` : '';
-      const danger = n.night && !m.visited.includes(n.id) ? `<span class="dg">${'●'.repeat(DANGER[n.kind === 'guardian' ? 'guardian' : n.contract!])}</span>` : '';
-      return `<button class="node ${cls}" style="left:${X(n.lane)}%; top:${Y(n.row)}%; --i:${n.row}" data-act="n${n.id}" aria-label="${info.name}"><span class="ic">${info.icon}</span>${tag}${wx}${danger}</button>`;
-    }).join('');
-    // the island token: where you are now (or where you start)
-    const hereNode = m.at === null ? m.nodes.find(n => n.row === 0)! : m.nodes[m.at];
-    const token = `<span class="you ${m.at === null ? 'start' : ''}" style="left:${X(hereNode.lane)}%; top:${Y(hereNode.row)}%">${m.at === null ? 'Start' : 'You'}</span>`;
-    const nextBiome = run.route[run.act + 1];
+    // the chart unrolls the first time you look at a new act
+    const unroll = this.chartAct !== run.act && !document.body.classList.contains('reduce-motion');
+    this.chartAct = run.act;
+    const nextB = run.route[run.act + 1];
+    const chart = chartHtml({
+      m, act: run.act, biome: run.route[run.act], biomeName: this.biome.name, nextBiomeName: nextB ? BIOMES[nextB].name : null,
+      next: new Set(next.map(n => n.id)), future: ahead(m), sel: this.mapSel, unroll,
+      art: n => { const i = this.nodeInfo(n); return { glyph: i.icon, name: i.name }; },
+      weatherGlyph: n => (n.weather ? WEATHER[n.weather].icon : ''),
+    });
+    const keepScroll = document.querySelector('.chart-view')?.scrollTop;
     const info = sel ? this.nodeInfo(sel) : null;
     const fight = !!sel && (sel.kind === 'battle' || sel.kind === 'guardian');
-    const legend = (['shop', 'camp', 'forge', 'treasure', 'unique', 'event'] as StopKind[]).map(k => `<span><i>${STOPS[k].icon}</i>${STOPS[k].name}</span>`).join('');
+    const danger = sel && fight ? DANGER[sel.kind === 'guardian' ? 'guardian' : sel.contract!] : 0;
+    // the map key, drawn with the same seals and sketches as the chart
+    const key = [
+      ...(['shop', 'camp', 'forge', 'treasure', 'unique', 'event'] as StopKind[]).map(k => `<span><i>${stopIcon(k)}</i>${STOPS[k].name}</span>`),
+      ...(['standard', 'calm', 'bounty', 'siege', 'skyward'] as ContractId[]).map((c, i) => `<span><i>${placeArt({ id: 900 + i, kind: 'battle', contract: c }, CONTRACTS[c].icon)}</i>${CONTRACTS[c].name}</span>`),
+      `<span><i>${placeArt({ id: 905, kind: 'guardian' }, '')}</i>Boss</span>`,
+    ].join('');
     this.overlay(sheet({
       kicker: `Act ${run.act + 1} of 3 · ${this.biome.name}`,
       title: 'Map',
-      note: 'Pick your path. Red squares are nights to survive. The circles between them are stops that each give you one thing.',
+      note: 'Pick your path to the boss. Red wax seals are nights to survive; the sketches between them are stops that each give you one thing.',
       headRight: this.purse(),
       body: `<div class="mapwrap">
-          <div class="map" style="--rows:${m.rows}">
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none">${edges}</svg>
-            ${nodes}
-            ${token}
-          </div>
+          ${chart}
           <aside class="mapinfo">
-            ${info ? `<div class="pick ${fight ? 'fight' : ''}"><span class="ic">${info.icon}</span><div><span class="label">${fight ? 'Battle' : 'Stop'}${canGo ? '' : ' · later on the path'}</span><b>${info.name}</b><p>${info.desc}</p>${fight ? `<p class="dgline">Danger <span class="dg">${'●'.repeat(DANGER[sel.kind === 'guardian' ? 'guardian' : sel.contract!])}${'○'.repeat(4 - DANGER[sel.kind === 'guardian' ? 'guardian' : sel.contract!])}</span>${sel.contract && CONTRACTS[sel.contract].gold ? ` · Reward +${CONTRACTS[sel.contract].gold} gold` : sel.contract && CONTRACTS[sel.contract].relic ? ' · Reward: a relic' : ''}</p>` : ''}</div></div>` : ''}
-            <p class="mapnote">${nextBiome ? `After the boss your island flies to ${BIOMES[nextBiome].name} ✈` : 'The boss at the top is the final battle.'}</p>
-            <div class="legend">${legend}</div>
-            <div class="legend nights">${(['standard', 'calm', 'bounty', 'siege', 'skyward'] as ContractId[]).map(c => `<span><i class="f">${CONTRACTS[c].icon}</i>${CONTRACTS[c].name}</span>`).join('')}<span><i class="f">${GUARDIAN_INFO.icon}</i>Boss</span><span><i class="dgk">●</i>Danger</span></div>
+            <span class="pin" aria-hidden="true"></span>
+            ${info ? `<div class="pick ${fight ? 'fight' : ''}"><span class="art">${placeArt(sel, info.icon)}</span><div><span class="label">${fight ? `Night ${sel.night}` : 'Stop'}${canGo ? '' : ' · later on the path'}</span><b>${info.name}</b><p>${info.desc}</p>${fight ? `<p class="dgline">Danger <span class="dg">${'●'.repeat(danger)}${'○'.repeat(4 - danger)}</span>${sel.contract && CONTRACTS[sel.contract].gold ? ` · Reward +${CONTRACTS[sel.contract].gold} gold` : sel.contract && CONTRACTS[sel.contract].relic ? ' · Reward: a relic' : ''}</p>` : ''}</div></div>` : ''}
             ${fight ? this.nightPreview(sel) : ''}
             <div class="runsum">
               <span class="label">Your run</span>
@@ -1337,14 +1326,14 @@ export class Game {
               <div><b>${run.bag.length}</b> pieces · core pulse ${run.coreLevel} · ${run.stats.kills} enemies defeated</div>
             </div>
             <div class="bagbtn">${tab(`See your bag (${run.bag.length})`, 'bag')}${tab('Settings', 'settings')}${tab('Quit to title', 'quit')}</div>
+            <details class="mapkey"><summary class="label">Map key</summary><div class="legend">${key}</div></details>
           </aside>
         </div>`,
       foot: `<span class="label">${matchMedia('(pointer: coarse)').matches ? 'Tap a glowing spot, then Go' : 'Click a glowing spot to choose it'}</span>${stamp(canGo ? (fight ? `Start day ${run.day}` : `Go: ${info!.name}`) : 'Not yet', 'go', '', !canGo)}`,
       cls: 'mapsheet',
     }), true, acts);
-    if (run.day === 2 && m.visited.length === 1) this.coach('mapintro', 'The map', 'Choose your path to the boss at the top. Red squares are nights (the dots show how hard). The circles are stops that each give you one thing: a shop, a camp, a forge…');
-    // keep the spot you are choosing on screen (the map is taller than a phone)
-    if (!HEADLESS) document.querySelector('.map .node.sel')?.scrollIntoView({ block: 'center' });
+    if (run.day === 2 && m.visited.length === 1) this.coach('mapintro', 'The map', 'Choose your path to the boss at the top. Red wax seals are nights (the notches show how hard). The sketches are stops that each give you one thing: a shop, a camp, a forge…');
+    if (!HEADLESS) this.followChart(keepScroll, unroll);
     this.renderHud();
   }
 
@@ -1357,21 +1346,41 @@ export class Game {
     return `<div class="preview"><span class="label">Expect about</span>${[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t, c]) => `<span class="pv" data-tip="<b>${ENEMIES[t].name}</b><br>${ENEMIES[t].desc}">${enemyGlyph(t)}${c}</span>`).join('')}</div>`;
   }
 
+  /**
+   * Keep the chart scrolled where it was across a re-render, but bring the pawn (or a target place)
+   * into view when it would sit near an edge. A new act starts at the bottom and glides up to the pawn.
+   */
+  private followChart(keep: number | undefined, unroll: boolean, focus?: HTMLElement) {
+    const view = document.querySelector<HTMLElement>('.chart-view');
+    const el = focus ?? view?.querySelector<HTMLElement>('.pawn');
+    if (!view || !el) return;
+    if (unroll) view.scrollTop = view.scrollHeight;
+    else if (keep !== undefined) view.scrollTop = keep;
+    const y = el.offsetTop - view.scrollTop;
+    if (unroll || y < view.clientHeight * 0.3 || y > view.clientHeight * 0.85) {
+      view.scrollTo({ top: el.offsetTop - view.clientHeight * 0.62, behavior: unroll || focus || keep !== undefined ? 'smooth' : 'auto' });
+    }
+  }
+
   private enterNode(n: MapNode, travelled = false) {
     const run = this.run!;
     const m = run.map;
     if (!reachable(m).includes(n)) return;
-    // on the map, the "You" token walks to the chosen spot first
-    const token = document.querySelector<HTMLElement>('.map .you');
-    const target = document.querySelector<HTMLElement>(`.map .node[data-act="n${n.id}"]`);
-    if (!travelled && token && target && !document.body.classList.contains('reduce-motion')) {
-      if (token.dataset.moving) return;
-      token.dataset.moving = '1';
-      token.classList.remove('start');
-      token.style.left = target.style.left;
-      token.style.top = target.style.top;
+    // on the chart, the trail inks itself in and the pawn hops along it first
+    const pawn = document.querySelector<HTMLElement>('.chart .pawn');
+    const target = document.querySelector<HTMLElement>(`.chart .place[data-act="n${n.id}"]`);
+    if (!travelled && pawn && target && !document.body.classList.contains('reduce-motion')) {
+      if (pawn.dataset.moving) return;
+      pawn.dataset.moving = '1';
+      if (m.at !== null) document.querySelector(`.chart .inkline[data-e="${m.at}-${n.id}"]`)?.classList.add('inking');
+      pawn.classList.remove('start');
+      pawn.classList.add('moving');
+      pawn.style.left = target.style.left;
+      pawn.style.top = target.style.top;
+      target.classList.add('arrive');
+      this.followChart(undefined, false, target);
       sfx.rotate();
-      setTimeout(() => this.enterNode(n, true), 480);
+      setTimeout(() => this.enterNode(n, true), 640);
       return;
     }
     sfx.click();

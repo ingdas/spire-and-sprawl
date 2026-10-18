@@ -23,7 +23,7 @@ npm run bench -- tools/bench/experiments/baseline.json   # balance bench, see to
 - **Day:** draw 4 pieces and place them. A piece lands on whatever is under it, so stacking builds up and spreading claims ground. You can **keep** one piece for tomorrow, **demolish** 2 blocks, and starting the night early pays +1 gold per unused piece.
 - **Night:** enemies come from the red sides and chew the *bottom* of your columns. Click a tower to **topple** it: it falls in a line and crushes everything it lands on, and if it hits another tower that one falls too. In an emergency you can drop a stone block for 3 gold. The Aim setting picks what turrets shoot first.
 - **Morning:** collect gold (with interest on savings) and pick one free piece (sometimes gilded or unique). Sky raids also give a relic.
-- **Map:** each act is a branching map, read from bottom to top. Red squares are nights and show the night's type (normal, quiet, bounty, sky raid, siege) and weather, so harder nights are a choice. Between nights are stops, and each stop does one thing:
+- **Map:** each act is a surveyor's chart on a desk, read from bottom to top: ink trails, a pawn that hops along them, fog over the rows far ahead, and a sheet that unrolls when the act begins (`src/chart.ts`). Red wax seals are nights; their sign shows the night's type (normal, quiet, bounty, sky raid, siege), the notches show how dangerous it is, and a badge shows the weather, so harder nights are a choice. Between nights are stops, and each stop does one thing:
 
   | Stop | What it does |
   |---|---|
