@@ -26,6 +26,8 @@ function disposeTree(o: THREE.Object3D) {
   o.traverse(c => { const m = (c as THREE.Mesh).material as THREE.Material | undefined; m?.dispose(); });
 }
 const GRAVITY = 38;
+/** enemies are drawn larger than their hit size so they read next to the blocks */
+const ENEMY_SCALE = 1.3;
 export const world = (x: number, y: number, z = 0) => new THREE.Vector3(x - C, z, y - C);
 
 function toonGradient() {
@@ -133,6 +135,11 @@ export class Renderer {
   private ghostSpin = 0;
   private ghostFading: { g: THREE.Group; t: number }[] = [];
   private islandTarget: { a: THREE.Color; b: THREE.Color; cliff: THREE.Color; rock: THREE.Color } | null = null;
+  private glowAt = -1;
+  /** how high the camera looks: follows the tallest tower */
+  private focusY = 1.5;
+  private validRoot = new THREE.Group();
+  private coreXray: THREE.Mesh;
   private coreSq = 0;
   private coreSqv = 0;
   private blockRoot = new THREE.Group();
@@ -194,7 +201,11 @@ export class Renderer {
     halo.name = 'halo';
     this.core.add(base, this.coreGem, halo);
     this.core.position.copy(world(CORE.x, CORE.y));
-    this.scene.add(this.core, this.blockRoot, this.ghostRoot, this.ringRoot, this.telegraphRoot);
+    this.coreXray = new THREE.Mesh(this.coreGem.geometry, new THREE.MeshBasicMaterial({ color: PALETTE.core, transparent: true, opacity: 0.35, depthTest: false, depthWrite: false }));
+    this.coreXray.renderOrder = 30;
+    this.coreXray.raycast = noRaycast;
+    this.coreGem.add(this.coreXray);
+    this.scene.add(this.core, this.blockRoot, this.ghostRoot, this.ringRoot, this.telegraphRoot, this.validRoot);
 
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -283,8 +294,45 @@ export class Renderer {
     const w = window.innerWidth, h = window.innerHeight;
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
-    this.camera.fov = w < h ? 55 : 38;
+    // keep about 35 degrees of horizontal view so the whole island fits on a phone held upright
+    const aspect = w / h;
+    this.camera.fov = Math.max(38, (2 * Math.atan(Math.tan((17.5 * Math.PI) / 180) / aspect) * 180) / Math.PI);
     this.camera.updateProjectionMatrix();
+  }
+
+  /** Aim the camera a little higher as towers grow, so their tops stay on screen. */
+  setFocus(tallest: number) { this.focusY = 1.5 + Math.max(0, tallest - 4) * 0.4; }
+
+  /** Faint outlines on every cell where the selected piece can go. */
+  setValid(cells: { x: number; y: number; z: number }[]) {
+    for (const o of this.validRoot.children) disposeTree(o);
+    this.validRoot.clear();
+    if (!cells.length) return;
+    const pts: number[] = [];
+    const h = 0.42;
+    for (const c of cells) {
+      const p = world(c.x, c.y, c.z + 0.03);
+      const q = [[-h, -h], [h, -h], [h, h], [-h, h]];
+      for (let i = 0; i < 4; i++) { const a = q[i], b = q[(i + 1) % 4]; pts.push(p.x + a[0], p.y, p.z + a[1], p.x + b[0], p.y, p.z + b[1]); }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const lines = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
+    lines.userData.age = 0;
+    lines.raycast = noRaycast;
+    this.validRoot.add(lines);
+    const tiles = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.84, 0.84).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }), cells.length);
+    cells.forEach((c, i) => tiles.setMatrixAt(i, new THREE.Matrix4().setPosition(world(c.x, c.y, c.z + 0.025))));
+    tiles.userData.age = 0;
+    tiles.userData.fill = true;
+    tiles.raycast = noRaycast;
+    this.validRoot.add(tiles);
+  }
+
+  /** Screen position of a world point, for HUD markers. */
+  project(v: THREE.Vector3) {
+    const p = v.clone().project(this.camera);
+    return { x: ((p.x + 1) / 2) * window.innerWidth, y: ((1 - p.y) / 2) * window.innerHeight };
   }
 
   setNight(on: boolean) {
@@ -310,6 +358,7 @@ export class Renderer {
         mesh.userData.blockId = b.id;
         mesh.userData.cell = { x, y };
         this.blockRoot.add(mesh);
+        mat.emissive.setHex(MATS[b.mat].color).multiplyScalar(this.nightAmt * (MATS[b.mat].turret ? 0.38 : 0.14));
         v = { mesh, mat, target, emblem: null, matId: b.mat, x, y, pos, vy: 0, delay: z * 0.035 + Math.random() * 0.04, tip: null, sq: 0, sqv: 0, flash: 0, emblemAge: 1, emblemOut: null, emblemOutAge: 0 };
         this.blockViews.set(b.id, v);
       } else if (Math.hypot(target.x - v.pos.x, target.z - v.pos.z) > 0.3 && !v.tip) {
@@ -557,7 +606,7 @@ export class Renderer {
 
   setTelegraph(sides: number[]) {
     for (const o of this.telegraphRoot.children) if (!sides.includes(o.userData.side)) o.userData.leave ??= 0;
-    const mat = toon(0xff4d6d, { emissive: 0x551020 });
+    const mat = toon(0xffe14a, { emissive: 0xb88a00 });
     for (const s of sides) {
       if (this.telegraphRoot.children.some(o => o.userData.side === s && o.userData.leave === undefined)) continue;
       const a = outlined(GEO.arrow, mat, 0.05, false);
@@ -572,7 +621,7 @@ export class Renderer {
       a.userData.side = s;
       a.scale.setScalar(1.4);
       this.telegraphRoot.add(a);
-      const strip = new THREE.Mesh(new THREE.PlaneGeometry(N, 0.6), new THREE.MeshBasicMaterial({ color: 0xff4d6d, transparent: true, opacity: 0.45, depthWrite: false }));
+      const strip = new THREE.Mesh(new THREE.PlaneGeometry(N, 0.6), new THREE.MeshBasicMaterial({ color: 0xffb02e, transparent: true, opacity: 0.45, depthWrite: false }));
       strip.rotation.x = -Math.PI / 2;
       strip.rotation.order = 'YXZ';
       strip.rotation.y = s % 2 ? Math.PI / 2 : 0;
@@ -690,7 +739,7 @@ export class Renderer {
       sxz = 1 + Math.sin(t * 5) * 0.06; sy = 1 - Math.sin(t * 5) * 0.06;
     }
     sy *= 1 - 0.28 * v.punch; sxz *= 1 + 0.22 * v.punch;
-    const k = Math.max(0.001, grow);
+    const k = Math.max(0.001, grow) * ENEMY_SCALE;
     v.root.scale.set(k * sxz, k * sy, k * sxz);
     v.root.position.y += lift;
     v.hpBar.scale.set(1 / Math.max(0.2, k * sxz), 1 / Math.max(0.2, k * sy), 1);
@@ -793,18 +842,23 @@ export class Renderer {
 
   floatText(pos: THREE.Vector3, text: string, color: string) {
     const canvas = document.createElement('canvas');
-    canvas.width = 128; canvas.height = 64;
+    const font = 'bold 40px "Trebuchet MS", sans-serif';
+    const measure = canvas.getContext('2d')!;
+    measure.font = font;
+    // wide enough for the whole label ("−2 Bulwark"), not just short numbers
+    canvas.width = Math.max(128, Math.ceil(measure.measureText(text).width + 24)); canvas.height = 64;
     const ctx = canvas.getContext('2d')!;
-    ctx.font = 'bold 40px "Trebuchet MS", sans-serif';
+    ctx.font = font;
     ctx.textAlign = 'center';
     ctx.lineWidth = 7;
     ctx.strokeStyle = '#221a33';
-    ctx.strokeText(text, 64, 46);
+    ctx.strokeText(text, canvas.width / 2, 46);
     ctx.fillStyle = color;
-    ctx.fillText(text, 64, 46);
+    ctx.fillText(text, canvas.width / 2, 46);
     const tex = new THREE.CanvasTexture(canvas);
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
     s.scale.set(0.001, 0.001, 1);
+    s.userData.w = canvas.width / 128;
     s.position.copy(pos);
     s.renderOrder = 20;
     this.scene.add(s);
@@ -925,6 +979,11 @@ export class Renderer {
       }
     }
     this.placeGhost(realDt);
+    for (const l of this.validRoot.children) {
+      l.userData.age += realDt;
+      const peak = l.userData.fill ? 0.22 : 0.85;
+      ((l as THREE.LineSegments).material as THREE.LineBasicMaterial).opacity = Math.min(peak, l.userData.age * 3 * peak) * (0.75 + Math.sin(t * 3) * 0.25);
+    }
     for (let i = this.ghostFading.length - 1; i >= 0; i--) {
       const f = this.ghostFading[i];
       f.t += realDt / 0.16;
@@ -1013,7 +1072,7 @@ export class Renderer {
       } else if (f.kind === 'float') {
         // pops in with overshoot, then drifts up and slows down
         const pop = Math.max(0.001, easeOutBack(clamp01((1 - k) * f.max / 0.22)));
-        f.obj.scale.set(1.2 * pop, 0.6 * pop, 1);
+        f.obj.scale.set(1.2 * pop * (f.obj.userData.w ?? 1), 0.6 * pop, 1);
         f.obj.position.y += realDt * 2.4 * k;
         (f.obj as THREE.Sprite).material.opacity = Math.min(1, k * 2.5);
       } else if (f.kind === 'puff' && f.vel) {
@@ -1037,12 +1096,20 @@ export class Renderer {
     const ni = this.nightTarget - this.nightAmt;
     this.nightAmt += Math.sign(ni) * Math.min(Math.abs(ni), realDt * 0.8);
     const n = this.nightAmt;
-    this.hemi.color.set(0xfff4e0).lerp(new THREE.Color(0x8fa0ff), n);
-    this.hemi.groundColor.set(0x8a7a9a).lerp(new THREE.Color(0x2a1e4a), n);
-    this.hemi.intensity = 1.4 - n * 0.25;
-    this.sun.color.set(0xffffff).lerp(new THREE.Color(0xb9a8ff), n);
-    this.sun.intensity = 2.2 - n * 0.7;
+    // night is cooler but keeps colours apart: blocks glow faintly in their own colour, turrets most
+    this.hemi.color.set(0xfff4e0).lerp(new THREE.Color(0xc4caff), n);
+    this.hemi.groundColor.set(0x8a7a9a).lerp(new THREE.Color(0x4a3e6a), n);
+    this.hemi.intensity = 1.4 - n * 0.15;
+    this.sun.color.set(0xffffff).lerp(new THREE.Color(0xd8ccff), n);
+    this.sun.intensity = 2.2 - n * 0.6;
+    if (Math.abs(n - this.glowAt) > 0.01) {
+      this.glowAt = n;
+      for (const v of this.blockViews.values()) v.mat.emissive.setHex(MATS[v.matId].color).multiplyScalar(n * (MATS[v.matId].turret ? 0.38 : 0.14));
+    }
 
+    const ty = this.controls.target.y;
+    this.controls.target.y += (this.focusY - ty) * Math.min(1, realDt * 2);
+    this.camera.position.y += this.controls.target.y - ty;
     this.controls.update();
     if (this.shake > 0) {
       this.shake = Math.max(0, this.shake - realDt);

@@ -107,6 +107,22 @@ export function makeMap(act: number, opts: { treasure: boolean }): ActMap {
   return { nodes, rows: LAYOUT.length, at: null, visited: [] };
 }
 
+/** How hard each kind of night is, 1-4, shown as pips on the map. */
+export const DANGER: Record<string, number> = { calm: 1, standard: 2, bounty: 3, siege: 3, skyward: 3, guardian: 4 };
+
+/** Every node still reachable from where you stand (including the next ones). */
+export function ahead(m: ActMap): Set<number> {
+  const out = new Set<number>();
+  const todo = reachable(m).map(n => n.id);
+  while (todo.length) {
+    const id = todo.pop()!;
+    if (out.has(id)) continue;
+    out.add(id);
+    todo.push(...m.nodes[id].next);
+  }
+  return out;
+}
+
 /** Nodes the player may move to next. */
 export function reachable(m: ActMap): MapNode[] {
   if (m.at === null) return m.nodes.filter(n => n.row === 0);

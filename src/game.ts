@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { isMuted, setMuted, sfx } from './audio';
 import { Board, Placement } from './board';
-import { ENEMIES, EnemyId, HAND_SIZE, MATS, MatId, NIGHTS, START_CORE_HP, START_GOLD, UNIQUES } from './config';
+import { CORE, ENEMIES, EnemyId, HAND_SIZE, MATS, MatId, N, NIGHTS, START_CORE_HP, START_GOLD, UNIQUES } from './config';
 import { CODEX, CodexDef, HEATS, Meta, RelicId, RunStats, SEALS, UPGRADES, relicDef } from './meta';
 import { FOUNDERS, FounderId, Piece, make, pivotOf, randomPiece, rotatePiece, uniquePiece } from './pieces';
 import { Renderer, world } from './render';
 import { AIMS, Aim, CONTRACTS, ContractId, Night, REACTIONS, WEATHER, STACK_BONUS, Wave, makeWave, rangeBonus, reactionOf, stackBelow, turretRange } from './sim';
 import { BIOMES, BiomeDef, BiomeId, actOf, randomCells, rollRoute } from './biomes';
-import { ActMap, GUARDIAN_INFO, MapNode, STOPS, StopKind, makeMap, reachable } from './map';
+import { ActMap, DANGER, GUARDIAN_INFO, MapNode, STOPS, StopKind, ahead, makeMap, reachable } from './map';
 import { badge, blankPlate, callout, compass, detail, enemyGlyph, flushDrawings, impression, ledgerLine, plate, sec, sheet, stamp, tab } from './ui';
 
 type Phase = 'title' | 'day' | 'night' | 'dawn' | 'end';
@@ -54,6 +54,11 @@ interface Run {
   event: EventId | null;
   eventDone: string;
   map: ActMap;
+  /** core damage taken, by enemy type and by night: the defeat screen explains the loss */
+  hurt: Partial<Record<EnemyId, number>>;
+  hurtByNight: Record<number, number>;
+  /** board states before each placement today, newest last */
+  undo: { cols: ReturnType<Board['snapshot']>; gold: number; idx: number }[];
 }
 
 const SIDE_NAMES = ['North', 'East', 'South', 'West'];
@@ -140,7 +145,7 @@ export class Game {
       this.r.tintBlocks(this.run.board);
       this.updateNightHud();
       // enemies move under the aim, so refresh the crush preview a few times a second
-      if ((this.aimTick += dt) > 0.2 && !this.dropping) { this.aimTick = 0; this.updateToppleGhost(); }
+      if ((this.aimTick += dt) > 0.2 && !this.dropping) { this.aimTick = 0; this.updateToppleGhost(); this.toppleHint(); }
       if (this.phase === 'night' && this.night.done) this.endNight();
     }
     this.r.update(dt, simDt);
@@ -328,7 +333,7 @@ export class Game {
       gold: Math.max(0, START_GOLD + 2 * meta.rank('treasury') - hot), coreHp: coreMax, coreMax, day: 1, relics: [],
       stats: { nights: 0, maxTallest: 0, maxHollows: 0, fallKills: 0, kills: 0, placedMats: new Set(), coreDamaged: false, finalFootprint: 0, finalMats: new Set(), won: false, maxChain: 1, calderaNights: 0, maxUniques: 0 },
       route: rollRoute(), act: 0, heat: meta.heat, coreLevel: 0, vents: [], wave: makeWave(1), handSize: HAND_SIZE + (meta.has('grand_architect') ? 1 : 0),
-      draft: [], draftPick: -1, treasure: [], treasurePick: -1, platesEarned: 0, redraws: 0, demolishes: 0, keep: null, keptIdx: -1, topples: 0, keystone: meta.rank('keystone') > 0, shop: [], shopSold: [], market: [], marketSold: [], income: [], contract: 'standard', event: null, eventDone: '', map: makeMap(0, { treasure: meta.heat < 5 }),
+      draft: [], draftPick: -1, treasure: [], treasurePick: -1, platesEarned: 0, redraws: 0, demolishes: 0, keep: null, keptIdx: -1, topples: 0, keystone: meta.rank('keystone') > 0, shop: [], shopSold: [], market: [], marketSold: [], income: [], contract: 'standard', event: null, eventDone: '', map: makeMap(0, { treasure: meta.heat < 5 }), hurt: {}, hurtByNight: {}, undo: [],
     };
     const gifts = (meta.has('grand_architect') ? 1 : 0) + meta.rank('cartouche');
     for (const id of this.relicChoices(gifts)) { this.addRelic(id); this.toast(`Starting relic: ${relicDef(id).name}.`); }
@@ -381,6 +386,7 @@ export class Game {
     this.drawHand();
     run.redraws = this.meta.rank('redraft');
     run.demolishes = DEMOLISH_PER_DAY;
+    run.undo = [];
     this.demolishing = false;
     this.sel = -1;
     this.rot = 0;
@@ -418,6 +424,8 @@ export class Game {
     const early = run.used.filter(u => !u).length;
     if (early) { run.gold += early; this.toast(`Early start: +${early} gold.`); }
     this.dropping = false;
+    run.undo = [];
+    this.r.setValid([]);
     run.topples = 1 + this.meta.rank('leverage') + (CONTRACTS[run.contract].topple ?? 0) + (this.has('tipping_point') ? 1 : 0);
     if (this.has('storm_caller') && !run.wave.guardian) run.wave.weather = 'storm';
     this.toppleDir = null;
@@ -431,7 +439,7 @@ export class Game {
       aim: () => this.aim,
       vents: run.vents,
       gold: (n, at) => { run.gold += n; sfx.coin(); if (at) this.r.floatText(at.clone().add(new THREE.Vector3(0, 0.6, 0)), `+${n}`, '#f7c948'); this.renderTop(); },
-      coreDamage: n => this.coreDamage(n),
+      coreDamage: (n, by, at) => this.coreDamage(n, by, at),
       onKill: fall => { run.stats.kills++; if (fall) run.stats.fallKills++; },
       boardChanged: () => { this.r.syncBoard(run.board); this.trackStats(); },
     });
@@ -446,9 +454,15 @@ export class Game {
     return { crystal: 1 + 0.1 * m.rank('lens'), ember: (1 + 0.1 * m.rank('kiln')) * b.emberMult, range: 0.25 * m.rank('eye'), crystalRange: b.crystalRange };
   }
 
-  private coreDamage(n: number) {
+  private coreDamage(n: number, by?: EnemyId, at?: THREE.Vector3) {
     const run = this.run!;
     run.coreHp = Math.max(0, run.coreHp - n);
+    if (by) {
+      run.hurt[by] = (run.hurt[by] ?? 0) + n;
+      run.hurtByNight[run.day] = (run.hurtByNight[run.day] ?? 0) + n;
+      this.r.floatText(world(CORE.x, CORE.y, 2.4), `−${n} ${ENEMIES[by].name}`, '#ff5470');
+      if (at) this.hitMarker(at);
+    }
     if (run.coreHp <= 0 && run.keystone) {
       run.keystone = false;
       run.coreHp = 3;
@@ -459,6 +473,19 @@ export class Game {
     sfx.coreHit();
     this.renderTop();
     if (run.coreHp <= 0) this.endRun(false);
+  }
+
+  /** A red chevron beside the core, pointing at where the hit came from. */
+  private hitMarker(at: THREE.Vector3) {
+    const c = this.r.project(world(CORE.x, CORE.y, 1.1)), e = this.r.project(at);
+    const a = Math.atan2(e.y - c.y, e.x - c.x);
+    const m = document.createElement('div');
+    m.className = 'hitmark';
+    m.style.left = `${c.x + Math.cos(a) * 70}px`;
+    m.style.top = `${c.y + Math.sin(a) * 70}px`;
+    m.style.setProperty('--a', `${a}rad`);
+    document.body.appendChild(m);
+    setTimeout(() => m.remove(), 900);
   }
 
   /** Save the selected piece: it skips today and joins tomorrow's hand as an extra. */
@@ -606,6 +633,21 @@ export class Game {
     $('actions').querySelector<HTMLButtonElement>('[data-act=turn]')?.removeAttribute('disabled');
   }
 
+  /** The topple counter glows when some tower could crush three or more enemies right now. */
+  private toppleHint() {
+    const run = this.run, n = this.night;
+    const el = document.querySelector('#actions .topples');
+    if (!run || !n || !el) return;
+    let best = 0;
+    if (run.topples > 0) {
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+        if (!run.board.canTopple(x, y)) continue;
+        for (let d = 0; d < 4; d++) best = Math.max(best, n.enemiesOn(run.board.toppleCells(x, y, d).filter(c => c.z >= 0)));
+      }
+    }
+    el.classList.toggle('hot', best >= 3);
+  }
+
   private tryTopple() {
     const aim = this.toppleAim();
     if (!aim) return;
@@ -734,6 +776,9 @@ export class Game {
             ${row('Tallest tower', s.maxTallest)}
             ${row('Area built', s.finalFootprint)}
           </table>
+          ${!won && Object.keys(run.hurt).length ? `${sec('!', 'What hurt the core')}
+            <table class="schedule hurt">${(Object.entries(run.hurt) as [EnemyId, number][]).sort((a, b) => b[1] - a[1]).map(([t, v]) => `<tr><td>${enemyGlyph(t)} ${ENEMIES[t].name}</td><td class="n">−${v}</td></tr>`).join('')}</table>
+            <p class="note">Worst night: night ${Object.entries(run.hurtByNight).sort((a, b) => b[1] - a[1])[0][0]} (−${Object.entries(run.hurtByNight).sort((a, b) => b[1] - a[1])[0][1]} HP).</p>` : ''}
           ${earned.length
             ? `${sec(2, 'Challenges completed!')}<div class="codex">${earned.map(c => this.codexPlate(c, true)).join('')}</div>`
             : `${sec(2, 'Try next')}<div class="codex">${open.map(c => this.codexPlate(c, false)).join('')}</div>`}
@@ -767,6 +812,7 @@ export class Game {
   private trackStats() {
     const run = this.run!;
     const st = run.board.stats();
+    this.r.setFocus(st.tallest);
     run.stats.maxTallest = Math.max(run.stats.maxTallest, st.tallest);
     run.stats.maxHollows = Math.max(run.stats.maxHollows, st.hollows);
     run.stats.maxUniques = Math.max(run.stats.maxUniques, [...run.board.blocks()].filter(b => MATS[b.b.mat].unique).length);
@@ -902,20 +948,28 @@ export class Game {
     // rows run bottom (start) to top (boss)
     const X = (lane: number) => 20 + lane * 30;
     const Y = (row: number) => 100 - ((row + 0.5) / m.rows) * 100;
+    // what's still reachable stays bright; the rest of the map fades back
+    const future = ahead(m);
+    const live = (id: number) => future.has(id) || m.visited.includes(id);
     const edges = m.nodes.flatMap(a => a.next.map(id => {
       const b = m.nodes[id];
       const walked = m.visited.includes(a.id) && m.visited.includes(b.id);
       const open = m.at === a.id;
-      return `<line x1="${X(a.lane)}" y1="${Y(a.row)}" x2="${X(b.lane)}" y2="${Y(b.row)}" class="${walked ? 'walked' : open ? 'open' : ''}"/>`;
+      const gone = !walked && !(live(a.id) && future.has(b.id));
+      return `<line x1="${X(a.lane)}" y1="${Y(a.row)}" x2="${X(b.lane)}" y2="${Y(b.row)}" class="${walked ? 'walked' : open ? 'open' : gone ? 'gone' : ''}"/>`;
     })).join('');
     const nodes = m.nodes.map(n => {
       const info = this.nodeInfo(n);
       const can = next.includes(n);
-      const cls = [n.kind === 'battle' || n.kind === 'guardian' ? 'fight' : 'stop', `k-${n.kind}`, can ? 'can' : '', m.visited.includes(n.id) ? 'done' : '', m.at === n.id ? 'here' : '', this.mapSel === n.id ? 'sel' : ''].join(' ');
+      const cls = [n.kind === 'battle' || n.kind === 'guardian' ? 'fight' : 'stop', `k-${n.kind}`, can ? 'can' : '', m.visited.includes(n.id) ? 'done' : '', m.at === n.id ? 'here' : '', this.mapSel === n.id ? 'sel' : '', live(n.id) ? '' : 'gone'].join(' ');
       const tag = n.night ? `<span class="nt">${n.night}</span>` : '';
       const wx = n.weather ? `<span class="wx">${WEATHER[n.weather].icon}</span>` : '';
-      return `<button class="node ${cls}" style="left:${X(n.lane)}%; top:${Y(n.row)}%; --i:${n.row}" data-act="n${n.id}" aria-label="${info.name}"><span class="ic">${info.icon}</span>${tag}${wx}</button>`;
+      const danger = n.night && !m.visited.includes(n.id) ? `<span class="dg">${'●'.repeat(DANGER[n.kind === 'guardian' ? 'guardian' : n.contract!])}</span>` : '';
+      return `<button class="node ${cls}" style="left:${X(n.lane)}%; top:${Y(n.row)}%; --i:${n.row}" data-act="n${n.id}" aria-label="${info.name}"><span class="ic">${info.icon}</span>${tag}${wx}${danger}</button>`;
     }).join('');
+    // the island token: where you are now (or where you start)
+    const hereNode = m.at === null ? m.nodes.find(n => n.row === 0)! : m.nodes[m.at];
+    const token = `<span class="you ${m.at === null ? 'start' : ''}" style="left:${X(hereNode.lane)}%; top:${Y(hereNode.row)}%">${m.at === null ? 'Start' : 'You'}</span>`;
     const nextBiome = run.route[run.act + 1];
     const info = sel ? this.nodeInfo(sel) : null;
     const fight = !!sel && (sel.kind === 'battle' || sel.kind === 'guardian');
@@ -929,11 +983,13 @@ export class Game {
           <div class="map" style="--rows:${m.rows}">
             <svg viewBox="0 0 100 100" preserveAspectRatio="none">${edges}</svg>
             ${nodes}
+            ${token}
           </div>
           <aside class="mapinfo">
-            ${info ? `<div class="pick ${fight ? 'fight' : ''}"><span class="ic">${info.icon}</span><div><span class="label">${fight ? 'Battle' : 'Stop'}${canGo ? '' : ' · later on the path'}</span><b>${info.name}</b><p>${info.desc}</p></div></div>` : ''}
+            ${info ? `<div class="pick ${fight ? 'fight' : ''}"><span class="ic">${info.icon}</span><div><span class="label">${fight ? 'Battle' : 'Stop'}${canGo ? '' : ' · later on the path'}</span><b>${info.name}</b><p>${info.desc}</p>${fight ? `<p class="dgline">Danger <span class="dg">${'●'.repeat(DANGER[sel.kind === 'guardian' ? 'guardian' : sel.contract!])}${'○'.repeat(4 - DANGER[sel.kind === 'guardian' ? 'guardian' : sel.contract!])}</span>${sel.contract && CONTRACTS[sel.contract].gold ? ` · Reward +${CONTRACTS[sel.contract].gold} gold` : sel.contract && CONTRACTS[sel.contract].relic ? ' · Reward: a relic' : ''}</p>` : ''}</div></div>` : ''}
             <p class="mapnote">${nextBiome ? `After the boss your island flies to ${BIOMES[nextBiome].name} ✈` : 'The boss at the top is the final battle.'}</p>
-            <div class="legend">${legend}<span><i class="f">☾</i>Night</span><span><i class="f">${GUARDIAN_INFO.icon}</i>Boss</span></div>
+            <div class="legend">${legend}</div>
+            <div class="legend nights">${(['standard', 'calm', 'bounty', 'siege', 'skyward'] as ContractId[]).map(c => `<span><i class="f">${CONTRACTS[c].icon}</i>${CONTRACTS[c].name}</span>`).join('')}<span><i class="f">${GUARDIAN_INFO.icon}</i>Boss</span><span><i class="dgk">●</i>Danger</span></div>
             <div class="bagbtn">${tab(`See your bag (${run.bag.length})`, 'bag')}</div>
           </aside>
         </div>`,
@@ -1270,9 +1326,24 @@ export class Game {
   private renderRelics() {
     const run = this.run!;
     const el = $('relics');
-    el.innerHTML = run.relics.length ? `<span class="label">Relics</span>${run.relics.map(id => callout(id)).join('')}` : '';
+    el.innerHTML = run.relics.length ? `<span class="label">Relics ${run.relics.length}</span>${run.relics.map(id => callout(id)).join('')}` : '';
+    el.onclick = () => this.showRelics();
     el.querySelectorAll<HTMLElement>('.callout').forEach((c, i) => { if (i >= this.relicsShown) { c.classList.add('fresh'); c.style.setProperty('--i', `${i - this.relicsShown}`); } });
     this.relicsShown = run.relics.length;
+  }
+
+  /** Every relic with its name and what it does (not during a night: the fight would keep running). */
+  private showRelics() {
+    const run = this.run;
+    if (!run || !run.relics.length || this.phase === 'night') return;
+    const back = this.phase === 'dawn' ? () => this.screen() : () => this.overlay('');
+    this.overlay(sheet({
+      kicker: '',
+      title: 'Your relics',
+      note: 'Relics are special powers that last for the rest of the run.',
+      body: `<div class="grid-row" style="margin-top:16px">${run.relics.map(id => detail(id, {})).join('')}</div>`,
+      foot: tab('Back', 'back'),
+    }), true, { back });
   }
 
   private renderHand() {
@@ -1305,9 +1376,9 @@ export class Game {
     if (this.phase === 'day') {
       const left = run.used.filter(u => !u).length;
       el.innerHTML = `${stamp('Start night', 'night', left ? `${left} piece${left > 1 ? 's' : ''} left` : 'ready!')}
-        <div class="tabs">${tab('Rotate', 'rotate', { disabled: this.sel < 0, tip: 'Rotate the piece (R)' })}${run.redraws > 0 ? tab(`Redraw ${run.redraws}`, 'redraw', { tip: 'Swap your unused pieces for new ones' }) : ''}${tab('Keep', 'keep', { disabled: this.sel < 0 || !!run.keep, tip: 'Save the selected piece for tomorrow (K)' })}${tab(`Demolish ${run.demolishes}`, 'demolish', { disabled: !run.demolishes, red: this.demolishing, tip: 'Remove one of your blocks (X)' })}${tab(`Bag ${run.bag.length}`, 'bag')}</div>`;
+        <div class="tabs">${tab('Rotate', 'rotate', { disabled: this.sel < 0, tip: 'Rotate the piece (R)' })}${tab('Undo', 'undo', { disabled: !run.undo.length, tip: 'Take back your last piece (Z)' })}${run.redraws > 0 ? tab(`Redraw ${run.redraws}`, 'redraw', { tip: 'Swap your unused pieces for new ones' }) : ''}${tab('Keep', 'keep', { disabled: this.sel < 0 || !!run.keep, tip: 'Save the selected piece for tomorrow (K)' })}${tab(`Demolish ${run.demolishes}`, 'demolish', { disabled: !run.demolishes, red: this.demolishing, tip: 'Remove one of your blocks (X)' })}${tab(`Bag ${run.bag.length}`, 'bag')}</div>`;
     } else if (this.phase === 'night') {
-      el.innerHTML = `<span class="left topples${run.topples ? '' : ' spent'}">⤵ Topples left: <b>${run.topples}</b></span>
+      el.innerHTML = `<span class="left topples${run.topples ? '' : ' spent'}" data-tip="<b>Topples</b><br>Click a tower to knock it onto the enemies.">⤵ Topples <b>${run.topples}</b></span>
         <div class="tabs">${tab(`Drop stone · ${DROP_COST}g`, 'drop', { disabled: run.gold < DROP_COST, red: this.dropping, tip: 'Drop a stone block on the enemies (D)' })}${run.topples ? tab('Turn ↻', 'turn', { disabled: !this.ghostKey, tip: 'Change which way the tower falls (R)' }) : ''}${tab(`Aim: ${AIMS[this.aim]}`, 'aim', { tip: 'What turrets shoot first: closest to the core, the strongest enemy, or fliers (A)' })}${tab(`Speed ${this.speed}×`, 'speed', { tip: 'Night speed (F)' })}</div>`;
     } else el.innerHTML = '';
     // the controls rise in when the phase changes, not on every refresh
@@ -1319,6 +1390,7 @@ export class Game {
       if (a === 'night') this.beginNight();
       if (a === 'bag') this.showBag('view');
       if (a === 'rotate') this.rotate();
+      if (a === 'undo') this.undoPlace();
       if (a === 'speed') this.toggleSpeed();
       if (a === 'redraw') this.redraw();
       if (a === 'turn') this.turnTopple();
@@ -1400,6 +1472,7 @@ export class Game {
     this.renderHand();
     this.renderActions();
     this.updateGhost();
+    this.showValid();
     this.setHint();
   }
 
@@ -1411,6 +1484,20 @@ export class Game {
     const blocks = rotatePiece(run.hand[this.sel].blocks, this.rot);
     const pv = pivotOf(blocks);
     return run.board.evaluate(blocks, cell.x - pv.x, cell.y - pv.y);
+  }
+
+  /** Where the selected piece (in its current rotation) can go: outlined on the board. */
+  private showValid() {
+    const run = this.run;
+    if (!run || this.phase !== 'day' || this.sel < 0) return this.r.setValid([]);
+    const blocks = rotatePiece(run.hand[this.sel].blocks, this.rot);
+    const pv = pivotOf(blocks);
+    const cells: { x: number; y: number; z: number }[] = [];
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const p = run.board.evaluate(blocks, x - pv.x, y - pv.y);
+      if (p.ok) cells.push({ x, y, z: run.board.height(x, y) });
+    }
+    this.r.setValid(cells);
   }
 
   private updateGhost() {
@@ -1462,6 +1549,7 @@ export class Game {
     const p = this.currentPlacement();
     if (!p || !p.ok) { sfx.invalid(); return; }
     const piece = run.hand[this.sel];
+    run.undo.push({ cols: run.board.snapshot(), gold: run.gold, idx: this.sel });
     const made = run.board.place(p, (m, z) => this.hpMult(m, z) * (piece.gilded ? GILD_HP : 1));
     if (piece.gilded) for (const b of made) b.gilded = true;
     for (const c of p.cells) run.stats.placedMats.add(c.mat);
@@ -1477,8 +1565,24 @@ export class Game {
     this.sel = -1;
     this.r.clearGhost();
     this.r.setRanges([]);
+    this.r.setValid([]);
     this.renderHud();
     if (next >= 0) this.selectCard(next);
+  }
+
+  /** Take back the last placement made today. */
+  private undoPlace() {
+    const run = this.run;
+    const u = run?.undo.pop();
+    if (!run || !u || this.phase !== 'day') return;
+    run.board.restore(u.cols);
+    run.gold = u.gold;
+    run.used[u.idx] = false;
+    this.r.syncBoard(run.board);
+    this.trackStats();
+    sfx.rotate();
+    this.renderHud();
+    this.selectCard(u.idx);
   }
 
   private rotate() {
@@ -1488,6 +1592,7 @@ export class Game {
     sfx.rotate();
     this.renderHand();
     this.updateGhost();
+    this.showValid();
   }
 
   // ======================= input =======================
@@ -1540,7 +1645,8 @@ export class Game {
         if (k === 'r') this.rotate();
         if (k === 'x') this.toggleDemolish();
         if (k === 'k') this.keepPiece();
-        if (k === 'escape') { this.demolishing = false; this.sel = -1; this.renderHand(); this.updateGhost(); this.setHint(); }
+        if (k === 'z') this.undoPlace();
+        if (k === 'escape') { this.demolishing = false; this.sel = -1; this.renderHand(); this.updateGhost(); this.showValid(); this.setHint(); }
         if (k >= '1' && k <= '5') this.selectCard(+k - 1);
         if (k === ' ' || k === 'enter') { e.preventDefault(); this.beginNight(); }
       } else if (this.phase === 'day' && k === 'escape') this.overlay('');
@@ -1558,16 +1664,17 @@ export class Game {
       if (!t) { this.fade(tip, false); return; }
       tip.innerHTML = t.dataset.tip!;
       this.fade(tip, true);
+      placeTip(e as MouseEvent);
     });
-    document.addEventListener('mousemove', e => {
-      if (tip.classList.contains('hidden')) return;
+    const placeTip = (e: MouseEvent) => {
       const w = tip.offsetWidth, h = tip.offsetHeight;
       let x = e.clientX + 16, y = e.clientY - h - 12;
       if (x + w > window.innerWidth - 8) x = e.clientX - w - 16;
       if (y < 8) y = e.clientY + 20;
       tip.style.left = `${x}px`;
       tip.style.top = `${y}px`;
-    });
+    };
+    document.addEventListener('mousemove', e => { if (!tip.classList.contains('hidden')) placeTip(e); });
   }
 
   // ======================= helpers =======================

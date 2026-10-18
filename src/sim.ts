@@ -189,7 +189,7 @@ export interface SimHooks {
   aim: () => Aim;
   vents: { x: number; y: number }[];
   gold: (n: number, at?: THREE.Vector3) => void;
-  coreDamage: (n: number) => void;
+  coreDamage: (n: number, by: EnemyId, at: THREE.Vector3) => void;
   onKill: (fall: boolean) => void;
   boardChanged: () => void;
 }
@@ -828,6 +828,12 @@ export class Night {
       }
     }
     e.alt += ((e.hidden ? -1.1 : 0) - e.alt) * Math.min(1, dt * 6);
+    // underground it still shows itself: a dust trail, then a warning ring just before it bursts up
+    if (e.hidden) {
+      const at = world(e.pos.x, e.pos.y, 0.05);
+      if (Math.floor(e.t * 5) !== Math.floor((e.t - dt) * 5)) { this.r.puff(at, 1); this.r.debris(at, 0x8c6a55, 1); }
+      if (e.shed < 0.9 && Math.floor(e.shed * 4) !== Math.floor((e.shed + dt) * 4)) this.r.ring(at, 1.2, 0xff5470, 0.35);
+    }
     const to = new THREE.Vector2(CORE.x, CORE.y).sub(e.pos);
     if (to.length() < 0.8) return this.hitCore(e);
     // slower above ground: that is the window to hit it
@@ -836,7 +842,7 @@ export class Night {
 
   private hitCore(e: Enemy) {
     e.dead = true;
-    this.hooks.coreDamage(e.def.coreDmg);
+    this.hooks.coreDamage(e.def.coreDmg, e.type, this.enemyWorld(e));
   }
 
   dispose() {

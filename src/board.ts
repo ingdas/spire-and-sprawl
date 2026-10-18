@@ -39,6 +39,10 @@ export class Board {
   inBounds(x: number, y: number) { return x >= 0 && y >= 0 && x < N && y < N; }
   isCore(x: number, y: number) { return x === CORE.x && y === CORE.y; }
   col(x: number, y: number) { return this.cols[this.idx(x, y)]; }
+
+  /** Copy of every column (blocks are copied too), for undoing a placement. */
+  snapshot(): (Block | null)[][] { return this.cols.map(c => c.map(b => (b ? { ...b } : null))); }
+  restore(cols: (Block | null)[][]) { this.cols = cols.map(c => c.map(b => (b ? { ...b } : null))); this.recompute(); }
   height(x: number, y: number) { return this.inBounds(x, y) ? this.col(x, y).length : 0; }
   blockAt(x: number, y: number, z: number): Block | null {
     if (!this.inBounds(x, y)) return null;

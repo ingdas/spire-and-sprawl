@@ -472,7 +472,8 @@ kbd { font-family: var(--mono); font-size: 10.5px; font-weight: 600; border: 1px
   #topbar { top: 8px; }
   #topbar .cell { padding: 3px 7px; min-width: 0; }
   #topbar .cell .v { font-size: 18px; }
-  #topbar .cell.stat { display: none; }
+  #topbar .cell.stat { min-width: 0; padding: 5px 7px; }
+  #topbar .cell.stat .v { font-size: 18px; }
   #threat { top: 64px; left: 8px; width: 168px; padding: 8px; }
   #threat .hd .t { font-size: 15px; }
   #threat svg.compass { width: 46px; height: 46px; }
@@ -648,3 +649,29 @@ kbd { font-family: var(--mono); font-size: 10.5px; font-weight: 600; border: 1px
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* map: where you are, what's still open, how dangerous each night is */
+.map .you { position: absolute; transform: translate(-50%, -175%); z-index: 3; pointer-events: none; font: 800 12px/1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--paper); background: var(--red); padding: 4px 7px 3px; border-radius: 3px; box-shadow: 0 2px 0 var(--ink); animation: youBob 1.6s ease-in-out infinite; }
+.map .you::after { content: ''; position: absolute; left: 50%; bottom: -5px; margin-left: -5px; border: 5px solid transparent; border-bottom: 0; border-top-color: var(--red); }
+.map .you.start { transform: translate(-50%, 95%); animation: none; }
+.map .you.start::after { bottom: auto; top: -5px; border-top: 0; border-bottom: 5px solid var(--red); }
+@keyframes youBob { 50% { translate: 0 -4px; } }
+.map .node.gone { opacity: 0.32; filter: grayscale(1); }
+.map line.gone { opacity: 0.25; }
+.map .node .dg { position: absolute; left: 50%; bottom: -15px; transform: translateX(-50%); font-size: 8px; letter-spacing: 1px; color: var(--red); white-space: nowrap; line-height: 1; }
+.mapinfo .dgline { margin-top: 6px !important; font-size: 13px; }
+.mapinfo .dgline .dg { color: var(--red); letter-spacing: 2px; }
+.mapinfo .legend.nights { margin-top: 8px; }
+.mapinfo .legend i.dgk { border: 0; color: var(--red); font-size: 10px; }
+
+/* where a core hit came from */
+.hitmark { position: fixed; z-index: 8; width: 0; height: 0; pointer-events: none; border: 14px solid transparent; border-left: 22px solid #ff3b5c; transform: translate(-50%, -50%) rotate(var(--a)); filter: drop-shadow(0 0 4px rgba(255, 59, 92, 0.8)); animation: hitmark 0.9s ease-out forwards; }
+@keyframes hitmark { 0% { opacity: 0; scale: 1.8; } 15% { opacity: 1; scale: 1; } 100% { opacity: 0; } }
+
+/* the topple counter is the night's key resource */
+#actions .topples { font-family: var(--display); font-weight: 800; font-size: 20px; text-transform: uppercase; padding: 6px 12px 5px; border: 2px solid currentColor; border-radius: 3px; }
+#actions .topples b { font-size: 26px; margin-left: 4px; }
+#actions .topples.hot { color: #ffd34a; animation: hot 0.8s ease-in-out infinite; }
+@keyframes hot { 50% { box-shadow: 0 0 0 6px rgba(255, 211, 74, 0.25); scale: 1.06; } }
+#relics { cursor: pointer; }
+table.hurt td:first-child svg { vertical-align: -2px; margin-right: 6px; }
