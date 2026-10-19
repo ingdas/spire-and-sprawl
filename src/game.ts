@@ -874,19 +874,17 @@ export class Game {
   private updateToppleGhost() {
     const aim = this.toppleAim();
     if (!aim) {
-      if (this.ghostKey) { this.ghostKey = ''; this.r.clearGhost(); }
-      $('actions').querySelector<HTMLButtonElement>('[data-act=turn]')?.setAttribute('disabled', '');
+      if (this.ghostKey) { this.ghostKey = ''; this.r.clearGhost(); this.renderActions(); }
       this.setHint();
       return;
     }
     const kept = aim.cells.filter(c => c.z >= 0);
     const key = `${aim.x},${aim.y},${aim.d},${this.run!.board.version}`;
-    if (key !== this.ghostKey) { this.ghostKey = key; this.r.setGhost(kept, true); }
+    if (key !== this.ghostKey) { const was = this.ghostKey; this.ghostKey = key; this.r.setGhost(kept, true); if (!was) this.renderActions(); }
     const hits = this.night!.enemiesOn(kept, TOPPLE_SWING);
     const chain = kept.some(c => c.z >= 2) ? ' · knocks over the next tower!' : '';
     const touch = matchMedia('(pointer: coarse)').matches;
     this.setHint(`${touch ? 'Tap again' : 'Click'} to topple ${SIDE_NAMES[aim.d].toLowerCase()}${hits ? ` · crushes ${hits} enem${hits > 1 ? 'ies' : 'y'}` : ''}${chain} · ${touch ? 'Turn ↻' : 'R'} to change direction`);
-    $('actions').querySelector<HTMLButtonElement>('[data-act=turn]')?.removeAttribute('disabled');
   }
 
   /** The topple counter glows when some tower could crush three or more enemies right now. */
@@ -1677,7 +1675,6 @@ export class Game {
     if (HEADLESS) return;
     const run = this.run;
     if (!run) return;
-    const st = run.board.stats();
     const phase = this.phase === 'night' ? 'Night' : this.phase === 'dawn' ? 'Dawn' : 'Day';
     const low = run.coreHp <= run.coreMax * 0.34;
     const ticks = Array.from({ length: run.coreMax }, (_, i) => `<i class="${i < Math.ceil(run.coreHp) ? '' : 'off'}"></i>`).join('');
@@ -1685,8 +1682,7 @@ export class Game {
       <div class="cell phase ${this.phaseShown && this.phaseShown !== this.phase ? 'changed' : ''}"><span class="label">${this.biome.name} · ${run.day}/${NIGHTS}</span><span class="v">${phase}</span></div>
       <div class="cell ${low ? 'low' : ''}" data-tip="<b>Core HP</b><br>If it reaches 0, you lose."><span class="label">Core HP</span><span class="v"><span data-num="thp">${Math.ceil(run.coreHp)}</span><small>/${run.coreMax}</small></span><div class="hpbar">${ticks}</div></div>
       <div class="cell" data-tip="<b>Gold</b><br>Earned every morning, more with gardens on the ground."><span class="label">Gold</span><span class="v gold"><span data-num="tgold">${run.gold}</span></span></div>
-      <div class="cell stat" data-tip="<b>Tallest tower</b><br>Height makes turrets shoot further, but attracts sappers."><span class="label">Tallest</span><span class="v"><span data-num="ttall">${st.tallest}</span></span></div>
-      <div class="cell stat" data-tip="<b>Area</b><br>Ground you have built on. Width earns gold, but attracts brutes."><span class="label">Area</span><span class="v"><span data-num="tarea">${st.footprint}</span></span></div>${run.heat ? `
+${run.heat ? `
       <div class="cell heatcell" data-tip="<b>Heat ${run.heat}</b><br>${HEATS.slice(0, run.heat).map((r, i) => `${i + 1}. ${r.replace(/"/g, '&quot;')}`).join('<br>')}"><span class="label">Heat</span><span class="v">${run.heat}</span></div>` : ''}`;
     this.animateNumbers($('topbar'));
     this.phaseShown = this.phase;
@@ -1807,6 +1803,12 @@ export class Game {
       else if (i === this.sel && this.handSel !== i) c.classList.add('lift');
       else if (i === this.sel && this.handRot !== this.rot) c.querySelector('canvas')?.classList.add('spin');
       c.onclick = () => this.selectCard(i);
+      if (i !== this.sel) return;
+      c.insertAdjacentHTML('beforeend', `<div class="cardacts">${tab('↻', 'rotate', { tip: '<b>Rotate</b> (R, or right-click)' })}${run.keep ? '' : tab('Keep', 'keep', { tip: '<b>Keep</b><br>Save this piece for tomorrow. (K)' })}</div>`);
+      c.querySelectorAll<HTMLElement>('.cardacts [data-act]').forEach(b => (b.onclick = e => {
+        e.stopPropagation();
+        if (b.dataset.act === 'rotate') this.rotate(); else this.keepPiece();
+      }));
     });
     if (this.phase === 'day') this.handShown = this.handDeal;
     this.handUsed = [...run.used];
@@ -1822,16 +1824,19 @@ export class Game {
     if (this.phase === 'day') {
       const left = run.used.filter(u => !u).length;
       el.innerHTML = `${stamp('Start night', 'night', left ? `${left} piece${left > 1 ? 's' : ''} left` : 'ready!')}
-        <div class="tabs">${tab('Rotate', 'rotate', { disabled: this.sel < 0, tip: 'Rotate the piece (R)' })}${tab('Undo', 'undo', { disabled: !run.undo.length, tip: 'Take back your last piece (Z)' })}${run.redraws > 0 ? tab(`Redraw ${run.redraws}`, 'redraw', { tip: 'Swap your unused pieces for new ones' }) : ''}${tab('Keep', 'keep', { disabled: this.sel < 0 || !!run.keep, tip: 'Save the selected piece for tomorrow (K)' })}${run.demolishes ? tab(`Demolish ${run.demolishes}`, 'demolish', { red: this.demolishing, tip: 'Remove one of your blocks (X)' }) : tab(`Demolish · ${DEMOLISH_COST}g`, 'paydemo', { disabled: run.gold < DEMOLISH_COST, tip: 'Pay for one more demolish today' })}${tab(`+ Piece · ${this.buyCost()}g`, 'buy', { disabled: run.gold < this.buyCost(), tip: 'Draw one more piece from your bag today. Costs more each time.' })}${tab(`Bag ${run.bag.length}`, 'bag', { tip: this.bagTip() })}</div>`;
+        <div class="tabs">${run.undo.length ? tab('Undo', 'undo', { tip: 'Take back your last piece (Z)' }) : ''}${run.redraws > 0 ? tab(`Redraw ${run.redraws}`, 'redraw', { tip: 'Swap your unused pieces for new ones' }) : ''}${run.demolishes ? tab(`Demolish ${run.demolishes}`, 'demolish', { red: this.demolishing, tip: 'Remove one of your blocks (X)' }) : tab(`Demolish · ${DEMOLISH_COST}g`, 'paydemo', { disabled: run.gold < DEMOLISH_COST, tip: 'Pay for one more demolish today' })}${tab(`+ Piece · ${this.buyCost()}g`, 'buy', { disabled: run.gold < this.buyCost(), tip: 'Draw one more piece from your bag today. Costs more each time.' })}${tab(`Bag ${run.bag.length}`, 'bag', { tip: this.bagTip() })}</div>`;
     } else if (this.phase === 'night') {
       el.innerHTML = `<span class="left topples${run.topples ? '' : ' spent'}" data-tip="<b>Topples</b><br>Click a tower to knock it onto the enemies.">⤵ Topples <b>${run.topples}</b></span>
-        <div class="tabs">${tab(this.paused ? 'Resume ▶' : 'Pause ❚❚', 'pause', { red: this.paused, tip: 'Pause the night (P). You can still look around.' })}${tab(`Rally${run.rallies ? ' ✓' : ''}`, 'rally', { disabled: run.rallies >= 1, tip: `Once a night: turrets fire twice as fast for ${RALLY_SECONDS} seconds (G)` })}${tab(`Shore up${run.shoreups ? ' ✓' : ''}`, 'shore', { disabled: run.shoreups >= 1, red: this.shoring, tip: 'Once a night: fully repair one tower and give it +50% HP (H)' })}${tab(`Drop stone · ${this.dropCost()}g`, 'drop', { disabled: run.gold < this.dropCost(), red: this.dropping, tip: 'Drop a stone block on the enemies (D). Each drop costs more.' })}${run.topples ? tab('Turn ↻', 'turn', { disabled: !this.ghostKey, tip: 'Change which way the tower falls (R)' }) : ''}${tab(this.showAllRanges ? 'Ranges ✓' : 'Ranges', 'ranges', { red: this.showAllRanges, tip: 'Show every turret range (V)' })}${tab(`Aim: ${AIMS[this.aim]}`, 'aim', { tip: 'What turrets shoot first: closest to the core, the strongest enemy, or fliers (A)' })}${tab(`Speed ${this.speed}×`, 'speed', { tip: 'Night speed (F)' })}</div>`;
+        <div class="tabs">${tab(`Rally${run.rallies ? ' ✓' : ''}`, 'rally', { disabled: run.rallies >= 1, tip: `Once a night: turrets fire twice as fast for ${RALLY_SECONDS} seconds (G)` })}${tab(`Shore up${run.shoreups ? ' ✓' : ''}`, 'shore', { disabled: run.shoreups >= 1, red: this.shoring, tip: 'Once a night: fully repair one tower and give it +50% HP (H)' })}${tab(`Drop stone · ${this.dropCost()}g`, 'drop', { disabled: run.gold < this.dropCost(), red: this.dropping, tip: 'Drop a stone block on the enemies (D). Each drop costs more.' })}${run.topples && this.ghostKey && matchMedia('(pointer: coarse)').matches ? tab('Turn ↻', 'turn', { tip: 'Change which way the tower falls (R)' }) : ''}</div>`;
     } else el.innerHTML = '';
+    const ctl = $('ctl');
+    this.fade(ctl, this.phase === 'night');
+    if (this.phase === 'night') ctl.innerHTML = `${tab(this.paused ? '▶' : '❚❚', 'pause', { red: this.paused, tip: `<b>${this.paused ? 'Resume' : 'Pause'}</b><br>You can still look around while paused. (P)` })}${tab(`${this.speed}×`, 'speed', { tip: '<b>Night speed</b> (F)' })}${tab('◎', 'ranges', { red: this.showAllRanges, tip: '<b>Ranges</b><br>Show every turret range. (V)' })}${tab(`Aim: ${AIMS[this.aim]}`, 'aim', { tip: '<b>Aim</b><br>What turrets shoot first: closest to the core, the strongest enemy, or fliers. (A)' })}`;
     // the controls rise in when the phase changes, not on every refresh
     if (this.actionsPhase !== this.phase) this.actionsFresh = performance.now() + 450;
     el.classList.toggle('fresh', performance.now() < this.actionsFresh);
     this.actionsPhase = this.phase;
-    el.querySelectorAll<HTMLElement>('[data-act]').forEach(b => (b.onclick = () => {
+    [...el.querySelectorAll<HTMLElement>('[data-act]'), ...ctl.querySelectorAll<HTMLElement>('[data-act]')].forEach(b => (b.onclick = () => {
       const a = b.dataset.act;
       if (a === 'night') this.beginNight();
       if (a === 'bag') this.showBag('view');
@@ -1916,7 +1921,7 @@ export class Game {
     let h = '';
     if (this.phase === 'day') {
       const touch = matchMedia('(pointer: coarse)').matches;
-      h = this.sel >= 0
+      if (this.meta.runs < 2) h = this.sel >= 0
         ? (touch ? 'Tap to preview, tap again to place · ⟳ to rotate' : 'Click to place · R / right-click to rotate · Esc to cancel')
         : (touch ? 'Pick a piece from your hand' : 'Pick a piece, or hover a column to inspect it · Space to begin the night');
       if (this.demolishing) h = `${touch ? 'Tap a block twice' : 'Click a block'} to remove it. Blocks above it fall down.`;
@@ -2173,13 +2178,22 @@ export class Game {
       if (!t) { this.fade(tip, false); return; }
       tip.innerHTML = t.dataset.tip!;
       this.fade(tip, true);
+      over = t;
       placeTip(e as MouseEvent);
     });
+    let over: HTMLElement | null = null;
     const placeTip = (e: MouseEvent) => {
       const w = tip.offsetWidth, h = tip.offsetHeight;
       let x = e.clientX + 16, y = e.clientY - h - 12;
       if (x + w > window.innerWidth - 8) x = e.clientX - w - 16;
       if (y < 8) y = e.clientY + 20;
+      // A finger covers what is under it, and a picked card grows buttons above itself: sit clear of the whole element.
+      if (over && matchMedia('(pointer: coarse)').matches) {
+        const r = over.getBoundingClientRect();
+        x = r.left + r.width / 2 - w / 2;
+        y = r.top - h - 56;
+        if (y < 8) y = r.bottom + 12;
+      }
       // On a narrow screen neither side of the pointer may fit: keep the card on screen.
       x = Math.max(8, Math.min(x, window.innerWidth - w - 8));
       y = Math.max(8, Math.min(y, window.innerHeight - h - 8));
