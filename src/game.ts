@@ -2180,6 +2180,9 @@ export class Game {
       let x = e.clientX + 16, y = e.clientY - h - 12;
       if (x + w > window.innerWidth - 8) x = e.clientX - w - 16;
       if (y < 8) y = e.clientY + 20;
+      // On a narrow screen neither side of the pointer may fit: keep the card on screen.
+      x = Math.max(8, Math.min(x, window.innerWidth - w - 8));
+      y = Math.max(8, Math.min(y, window.innerHeight - h - 8));
       tip.style.left = `${x}px`;
       tip.style.top = `${y}px`;
     };
